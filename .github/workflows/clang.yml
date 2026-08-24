@@ -129,11 +129,10 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        run: |
-          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-          vcpkg install \
-            --triplet ${{ inputs.vcpkg_triplet }} \
-            --overlay-triplets "${{ steps.overlay.outputs.triplets }}"
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@222ac51c98bb8f0473b68a523a92340620129d47
+        with:
+          triplet: ${{ inputs.vcpkg_triplet }}
+          overlay_triplets: ${{ steps.overlay.outputs.triplets }}
 
       # Keyed on the archives' contents: an unconditional save would add an
       # entry per run and evict this repo's other caches.
