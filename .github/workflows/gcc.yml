@@ -8,9 +8,10 @@ name: GCC
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow_ref }}-${{ github.ref }}
-  cancel-in-progress: true
+# No concurrency group here. In a called workflow github.workflow_ref names
+# the caller, so a group defined here lands in the caller's own group and
+# cancels it. Concurrency belongs to the stub, which knows whether it was
+# reached by a push, by a schedule, or through canary.yml.
 
 on:
   workflow_call:
@@ -49,7 +50,7 @@ on:
 jobs:
   # strategy.matrix takes no list and workflow_call inputs are scalars, so the
   # rungs are resolved to JSON here and read back through fromJSON below.
-  matrix:
+  ladder:
     name: Resolve the ladder
     runs-on: ubuntu-24.04
     outputs:
@@ -66,11 +67,11 @@ jobs:
 
   build:
     name: ${{ matrix.label }} ${{ matrix.build_type }}
-    needs: matrix
+    needs: ladder
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.matrix.outputs.legs) }}
+      matrix: ${{ fromJSON(needs.ladder.outputs.legs) }}
     env:
       VCPKG_BINARY_SOURCES: "clear;default,readwrite"
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
