@@ -8,9 +8,8 @@ name: Actionlint
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+# No concurrency group; see gcc.yml. It belongs to the calling stub, and this
+# workflow's own push runs are short enough not to want one.
 
 on:
   push:
@@ -18,6 +17,31 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      paths:
+        description: Glob of workflow files to lint, relative to the checkout.
+        type: string
+        required: false
+        default: .github/workflows/*.yml
+      shellcheck:
+        description: >
+          Value for actionlint's -shellcheck flag. Empty disables it, keeping
+          this workflow to Actions syntax and expressions and leaving
+          ShellCheck policy to be managed on its own.
+        type: string
+        required: false
+        default: ""
+      go_version:
+        description: Go toolchain used to install actionlint.
+        type: string
+        required: false
+        default: "1.25.1"
+      actionlint_version:
+        description: actionlint release to install.
+        type: string
+        required: false
+        default: v1.7.11
 
 jobs:
   lint:
@@ -30,13 +54,22 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.1'
+          go-version: ${{ inputs.go_version || '1.25.1' }}
           cache: false
 
       - name: Install actionlint
-        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+        env:
+          ACTIONLINT_VERSION: ${{ inputs.actionlint_version || 'v1.7.11' }}
+        run: go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
 
+      # This repository lints itself with the workflow it hands to others, so
+      # a change that would break a caller breaks this repository's own run.
       - name: Lint workflows
-        # Keep this workflow focused on GitHub Actions syntax and expressions;
-        # ShellCheck policy is managed independently.
-        run: actionlint -shellcheck='' .github/workflows/*.yml
+        env:
+          PATHS: ${{ inputs.paths || '.github/workflows/*.yml' }}
+          SHELLCHECK: ${{ inputs.shellcheck }}
+        run: |
+          set -euo pipefail
+          # Unquoted on purpose: PATHS is a glob the shell has to expand.
+          # shellcheck disable=SC2086
+          actionlint -shellcheck="$SHELLCHECK" $PATHS
