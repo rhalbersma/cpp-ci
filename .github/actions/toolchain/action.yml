@@ -78,7 +78,11 @@ runs:
         fi
 
         echo "supported=true" >> "$GITHUB_OUTPUT"
-        # Absent keys stay unset rather than empty, so a caller's
-        # "${{ cond && a || b }}" never falls through on a legitimate "false".
+        # Absent keys stay unset rather than empty. A caller selecting between
+        # two of these outputs writes "cond and a or b" in expression syntax,
+        # which falls through to b whenever a is empty -- and "false" must not
+        # read as empty. Expression syntax is deliberately not spelled out in
+        # this comment: the template engine evaluates it even here, inside a
+        # shell comment, and an undefined name there fails to load the action.
         jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "$entry" >> "$GITHUB_OUTPUT"
         jq -r '"resolved \(.label)"' <<< "$entry"
