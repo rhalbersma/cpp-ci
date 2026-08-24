@@ -1,0 +1,212 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Sanitizers
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow_ref }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Callable only: the legs below build the caller's CMake project, of which
+# this repository has none. The caller supplies the push and pull_request
+# triggers, in a stub whose name becomes the required status check.
+on:
+  workflow_call:
+    inputs:
+      gcc_tier:
+        description: Rung supplying the GCC for the ASan and UBSan/GCC legs.
+        type: string
+        required: false
+        default: stable
+      clang_tier:
+        description: Rung supplying the Clang for the two Clang legs.
+        type: string
+        required: false
+        default: stable
+      cxx_flags:
+        description: Flags appended after the sanitizer's own, for the caller.
+        type: string
+        required: false
+        default: ""
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+      vcpkg_triplet:
+        description: vcpkg triplet to install the test dependencies for.
+        type: string
+        required: false
+        default: x64-linux
+
+jobs:
+  build:
+    name: ${{ matrix.name }} / ${{ matrix.compiler }} ${{ matrix.family == 'gcc' && inputs.gcc_tier || inputs.clang_tier }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Leak detection deliberately left on. A library that allocates
+          # nothing has nothing to report, and the repositories that do
+          # allocate are the ones this leg exists for.
+          - id: asan
+            name: ASan + LSan
+            compiler: GCC
+            family: gcc
+            flags: -fsanitize=address -fno-omit-frame-pointer -g
+            options: ASAN_OPTIONS=detect_leaks=1
+
+          # UBSan twice over: the two implementations do not check the same
+          # set, so a clean run under one says nothing about the other.
+          - id: ubsan-gcc
+            name: UBSan
+            compiler: GCC
+            family: gcc
+            flags: -fsanitize=undefined -fno-sanitize-recover=undefined -g
+            options: UBSAN_OPTIONS=print_stacktrace=1
+
+          - id: ubsan-clang
+            name: UBSan
+            compiler: Clang
+            family: clang
+            flags: -fsanitize=undefined -fno-sanitize-recover=undefined -g
+            options: UBSAN_OPTIONS=print_stacktrace=1
+
+          # Clang-only: g++ rejects this group outright. It catches the
+          # value-dependent truncations and sign changes that -Wconversion
+          # can only warn about when it can prove them statically, which for
+          # bit-manipulation code is most of the interesting cases.
+          - id: implicit-conversion
+            name: Implicit conversion
+            compiler: Clang
+            family: clang
+            flags: -fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion -g
+            options: UBSAN_OPTIONS=print_stacktrace=1
+    env:
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # This repository's own actions by owner/repo@sha, not by ./ path: a
+      # relative reference resolves against the caller's workspace, which
+      # holds the caller's checkout and none of this. The pin keeps a caller's
+      # pinned workflow from silently pulling actions off a moving main.
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@116ef7f1e1e5b2a3d910c5a9b750f94b948c6446
+
+      - name: Resolve the toolchain on this rung
+        id: toolchain
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@116ef7f1e1e5b2a3d910c5a9b750f94b948c6446
+        with:
+          toolchain: ${{ matrix.family }}
+          tier: ${{ matrix.family == 'gcc' && inputs.gcc_tier || inputs.clang_tier }}
+
+      # Both families fill all three rungs today, so an unfilled one here is a
+      # caller naming a tier that this family will never have: fail, rather
+      # than pass a job that compiled nothing.
+      - name: Require the rung to be filled
+        if: steps.toolchain.outputs.supported != 'true'
+        run: |
+          echo "::error::${{ matrix.family }} has no ${{ matrix.family == 'gcc' && inputs.gcc_tier || inputs.clang_tier }} rung"
+          exit 1
+
+      # On the Clang legs this is the paired libstdc++ rather than a compiler,
+      # the div_result formatter needing its std::formatter<tuple>.
+      - name: Install GCC
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@116ef7f1e1e5b2a3d910c5a9b750f94b948c6446
+        with:
+          version: ${{ matrix.family == 'gcc' && steps.toolchain.outputs.version || steps.toolchain.outputs.gcc_version }}
+          trunk: ${{ matrix.family == 'gcc' && steps.toolchain.outputs.trunk || steps.toolchain.outputs.gcc_trunk }}
+          symlink_binaries: ${{ matrix.family == 'gcc' }}
+
+      - name: Install Clang
+        if: matrix.family == 'clang'
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@116ef7f1e1e5b2a3d910c5a9b750f94b948c6446
+        with:
+          version: ${{ steps.toolchain.outputs.version }}
+          llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
+
+      # Named once here rather than in every expression below, and the cache
+      # key with them: it has to name the rung, or a tier change would restore
+      # archives built by a different compiler. Deliberately not CC and CXX:
+      # those would also reach the vcpkg install below, which is meant to
+      # build Boost.Test with the runner's default compiler as before.
+      - name: Name the toolchain and its cache
+        env:
+          FAMILY: ${{ matrix.family }}
+          VERSION: ${{ steps.toolchain.outputs.version }}
+          LABEL: ${{ steps.toolchain.outputs.label }}
+          LEG: ${{ matrix.id }}
+        run: |
+          set -euo pipefail
+          if [ "$FAMILY" = "gcc" ]; then
+            echo "TOOLCHAIN_CC=gcc-${VERSION}"      >> "$GITHUB_ENV"
+            echo "TOOLCHAIN_CXX=g++-${VERSION}"     >> "$GITHUB_ENV"
+          else
+            echo "TOOLCHAIN_CC=clang-${VERSION}"    >> "$GITHUB_ENV"
+            echo "TOOLCHAIN_CXX=clang++-${VERSION}" >> "$GITHUB_ENV"
+          fi
+          echo "VCPKG_CACHE_KEY=vcpkg-sanitizers-${LEG}-${LABEL}-" >> "$GITHUB_ENV"
+
+      - name: Report toolchain versions
+        run: |
+          "$TOOLCHAIN_CC" --version
+          "$TOOLCHAIN_CXX" --version
+          cmake --version
+
+      # vcpkg's own x-gha backend was removed, so cache its binary packages
+      # with actions/cache; the archives are named by ABI hash.
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      - name: Install the test dependencies
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          vcpkg install --triplet ${{ inputs.vcpkg_triplet }}
+
+      # Keyed on the archives' contents: an unconditional save would add an
+      # entry per run and evict this repo's other caches.
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      # The sanitizer flags go to the link as well as the compile: each one
+      # needs its runtime pulled in. The caller's cxx_flags follow the
+      # sanitizer's own, so a repository can override what it chose.
+      - name: Configure
+        env:
+          SANITIZER_FLAGS: ${{ matrix.flags }} ${{ steps.toolchain.outputs.cxxflags }}
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER="$TOOLCHAIN_CC"
+          -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
+          -DCMAKE_CXX_FLAGS="$SANITIZER_FLAGS ${{ inputs.cxx_flags }}"
+          -DCMAKE_EXE_LINKER_FLAGS="$SANITIZER_FLAGS"
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
+          ${{ inputs.cmake_args }}
+
+      - name: Build
+        run: cmake --build build -v
+
+      - name: Test
+        run: env ${{ matrix.options }} ctest --test-dir build --output-on-failure
