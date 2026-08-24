@@ -1,0 +1,79 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Install GCC
+description: >
+  Install a GCC by major version, from the Ubuntu toolchain PPA for a released
+  one and from Jonathan Wakely's trunk snapshot for a development one. Serves
+  both the GCC legs and the Clang legs, which need a matching libstdc++.
+
+inputs:
+  version:
+    description: Major version, e.g. "15". With trunk, the version it reports.
+    required: true
+  trunk:
+    description: Whether to install the trunk snapshot instead of a release.
+    required: true
+  symlink_binaries:
+    description: >
+      Whether a trunk install also puts gcc-N and g++-N on PATH. False when
+      GCC is here only for its libstdc++, as on the Clang legs, where the
+      shared-library path below is the whole point.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install GCC ${{ inputs.version }} (release)
+      if: inputs.trunk != 'true'
+      shell: bash
+      run: |
+        # add-apt-repository resolves a ppa: shorthand through Launchpad's
+        # web API via launchpadlib, before apt is involved at all, so the
+        # Acquire::Retries setting does not cover it: that governs apt's own
+        # downloads. A truncated response here (IncompleteRead) fails the
+        # step outright, so retry the call itself.
+        for i in 1 2 3; do
+          if sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test; then break; fi
+          if [ "$i" -eq 3 ]; then exit 1; fi
+          sleep $((i * 5))
+        done
+        sudo apt-get update
+        sudo apt-get install -y "g++-${{ inputs.version }}"
+
+    - name: Install GCC trunk snapshot
+      if: inputs.trunk == 'true'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SYMLINK_BINARIES: ${{ inputs.symlink_binaries }}
+      run: |
+        set -euo pipefail
+        # Jonathan Wakely's binary snapshot of GCC trunk
+        # (https://jwakely.github.io/pkg-gcc-latest/), required like any leg.
+        wget -q --tries=3 --waitretry=5 --retry-on-http-error=429,500,502,503,504 https://kayari.org/gcc-latest/gcc-latest.deb -O gcc-latest.deb
+        # Deliberately the moving URL, so this leg keeps tracking trunk; upstream
+        # publishes neither checksums nor signatures, so record what arrived.
+        dpkg-deb -f gcc-latest.deb Package Version
+        sha256sum gcc-latest.deb
+        sudo dpkg -i gcc-latest.deb || sudo apt-get install -f -y
+
+        if [ "$SYMLINK_BINARIES" = "true" ]; then
+          sudo ln -sf /opt/gcc-latest/bin/gcc        "/usr/bin/gcc-${VERSION}"
+          sudo ln -sf /opt/gcc-latest/bin/g++        "/usr/bin/g++-${VERSION}"
+          sudo ln -sf /opt/gcc-latest/bin/gcov       "/usr/bin/gcov-${VERSION}"
+          sudo ln -sf /opt/gcc-latest/bin/gcov-dump  "/usr/bin/gcov-dump-${VERSION}"
+          sudo ln -sf /opt/gcc-latest/bin/gcov-tool  "/usr/bin/gcov-tool-${VERSION}"
+          sudo ln -sf /opt/gcc-latest/bin/gcc-ar     "/usr/bin/gcc-ar-${VERSION}"
+          sudo ln -sf /opt/gcc-latest/bin/gcc-nm     "/usr/bin/gcc-nm-${VERSION}"
+          sudo ln -sf /opt/gcc-latest/bin/gcc-ranlib "/usr/bin/gcc-ranlib-${VERSION}"
+        fi
+
+        printf '%s\n' \
+          '# Multiarch support' \
+          /opt/gcc-latest/lib \
+          /opt/gcc-latest/lib64 | sudo tee /etc/ld.so.conf.d/gcc-latest.conf > /dev/null
+        sudo ldconfig

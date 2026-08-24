@@ -1,0 +1,84 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Resolve toolchain
+description: >
+  Resolve a (toolchain family, tier) pair to the compiler currently occupying
+  that rung. The rungs live in toolchains.json next to this action, so a
+  release moves every calling repository at once: the callers name tiers, not
+  versions, and never learn a version number.
+
+inputs:
+  toolchain:
+    description: Toolchain family, a top-level key of toolchains.json.
+    required: true
+  tier:
+    description: One of stable, qualification, development.
+    required: true
+
+outputs:
+  # Not every family fills every rung: Apple publishes no Clang trunk, so
+  # apple-clang has no development. Callers read supported and skip, rather
+  # than failing on a rung that was never meant to exist.
+  supported:
+    description: Whether this family fills this rung, "true" or "false".
+    value: ${{ steps.resolve.outputs.supported }}
+  label:
+    description: Human-readable rung name, e.g. "17-SVN".
+    value: ${{ steps.resolve.outputs.label }}
+  version:
+    description: Major version of the compiler on this rung.
+    value: ${{ steps.resolve.outputs.version }}
+  trunk:
+    description: Whether this rung is a development snapshot, "true" or "false".
+    value: ${{ steps.resolve.outputs.trunk }}
+  llvm_suffix:
+    description: apt.llvm.org suite suffix; empty for the unversioned branch.
+    value: ${{ steps.resolve.outputs.llvm_suffix }}
+  gcc_version:
+    description: Major version of the GCC supplying this Clang's libstdc++.
+    value: ${{ steps.resolve.outputs.gcc_version }}
+  gcc_trunk:
+    description: Whether that GCC is a development snapshot.
+    value: ${{ steps.resolve.outputs.gcc_trunk }}
+  cxxflags:
+    description: Flags this rung needs to find its standard library.
+    value: ${{ steps.resolve.outputs.cxxflags }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+        TIER: ${{ inputs.tier }}
+      run: |
+        set -euo pipefail
+        table="$GITHUB_ACTION_PATH/toolchains.json"
+
+        # An unknown family is a typo in the caller and can only ever fail;
+        # an unfilled rung is a fact about the world, reported as supported=false.
+        if ! jq -e --arg t "$TOOLCHAIN" 'has($t)' "$table" > /dev/null; then
+          echo "::error::unknown toolchain '$TOOLCHAIN'; known: $(jq -r 'keys | join(", ")' "$table")"
+          exit 1
+        fi
+        case "$TIER" in
+          stable|qualification|development) ;;
+          *) echo "::error::unknown tier '$TIER'; expected stable, qualification or development"; exit 1 ;;
+        esac
+
+        entry=$(jq -c --arg t "$TOOLCHAIN" --arg r "$TIER" '.[$t][$r] // empty' "$table")
+        if [ -z "$entry" ]; then
+          echo "supported=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::$TOOLCHAIN has no $TIER rung"
+          exit 0
+        fi
+
+        echo "supported=true" >> "$GITHUB_OUTPUT"
+        # Absent keys stay unset rather than empty, so a caller's
+        # "${{ cond && a || b }}" never falls through on a legitimate "false".
+        jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "$entry" >> "$GITHUB_OUTPUT"
+        jq -r '"resolved \(.label)"' <<< "$entry"

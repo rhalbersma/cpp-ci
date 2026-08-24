@@ -1,0 +1,12 @@
+{
+  "gcc": {
+    "stable":        { "label": "15",     "version": "15", "trunk": "false" },
+    "qualification": { "label": "16",     "version": "16", "trunk": "false" },
+    "development":   { "label": "17-SVN", "version": "17", "trunk": "true"  }
+  },
+  "clang": {
+    "stable":        { "label": "22",     "version": "22", "llvm_suffix": "-22", "gcc_version": "15", "gcc_trunk": "false", "cxxflags": ""                              },
+    "qualification": { "label": "23",     "version": "23", "llvm_suffix": "-23", "gcc_version": "16", "gcc_trunk": "false", "cxxflags": ""                              },
+    "development":   { "label": "24-SVN", "version": "24", "llvm_suffix": "",    "gcc_version": "17", "gcc_trunk": "true",  "cxxflags": "--gcc-toolchain=/opt/gcc-latest" }
+  }
+}

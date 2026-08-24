@@ -1,0 +1,53 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Install Clang
+description: >
+  Install a Clang from apt.llvm.org, naming the key and suite directly rather
+  than running llvm.sh: that is an unversioned script fetched over the wire and
+  run as root, which nothing can pin, and its hardcoded table lags LLVM's
+  annual rollover, as do the metapackages.
+
+inputs:
+  version:
+    description: Major version, e.g. "22".
+    required: true
+  llvm_suffix:
+    description: >
+      Suite suffix selecting the apt.llvm.org branch: a versioned suite for
+      stable and qualification, the empty unversioned one for development.
+    required: true
+  libcxx:
+    description: Whether to install libc++ alongside, for the libc++ legs.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Clang ${{ inputs.version }}
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        LLVM_SUFFIX: ${{ inputs.llvm_suffix }}
+        LIBCXX: ${{ inputs.libcxx }}
+      run: |
+        set -euo pipefail
+        wget -qO- --tries=3 --waitretry=5 --retry-on-http-error=429,500,502,503,504 https://apt.llvm.org/llvm-snapshot.gpg.key \
+          | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+        codename=$(lsb_release -cs)
+        sudo add-apt-repository -y "deb https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}${LLVM_SUFFIX} main"
+        sudo apt-get update
+
+        packages=(
+          "clang-${VERSION}"
+          "lldb-${VERSION}"
+          "lld-${VERSION}"
+          "clangd-${VERSION}"
+        )
+        if [ "$LIBCXX" = "true" ]; then
+          packages+=("libc++-${VERSION}-dev" "libc++abi-${VERSION}-dev")
+        fi
+        sudo apt-get install -y "${packages[@]}"
