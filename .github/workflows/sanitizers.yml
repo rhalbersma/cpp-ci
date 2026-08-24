@@ -99,11 +99,11 @@ jobs:
       # relative reference resolves against the caller's workspace, which
       # holds the caller's checkout and none of this. The pin keeps a caller's
       # pinned workflow from silently pulling actions off a moving main.
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@116ef7f1e1e5b2a3d910c5a9b750f94b948c6446
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f1408f83d1804d1ff44aa27246994dfff5721adb
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@116ef7f1e1e5b2a3d910c5a9b750f94b948c6446
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f1408f83d1804d1ff44aa27246994dfff5721adb
         with:
           toolchain: ${{ matrix.family }}
           tier: ${{ matrix.family == 'gcc' && inputs.gcc_tier || inputs.clang_tier }}
@@ -120,7 +120,7 @@ jobs:
       # On the Clang legs this is the paired libstdc++ rather than a compiler,
       # the div_result formatter needing its std::formatter<tuple>.
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@116ef7f1e1e5b2a3d910c5a9b750f94b948c6446
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@f1408f83d1804d1ff44aa27246994dfff5721adb
         with:
           version: ${{ matrix.family == 'gcc' && steps.toolchain.outputs.version || steps.toolchain.outputs.gcc_version }}
           trunk: ${{ matrix.family == 'gcc' && steps.toolchain.outputs.trunk || steps.toolchain.outputs.gcc_trunk }}
@@ -128,7 +128,7 @@ jobs:
 
       - name: Install Clang
         if: matrix.family == 'clang'
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@116ef7f1e1e5b2a3d910c5a9b750f94b948c6446
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@f1408f83d1804d1ff44aa27246994dfff5721adb
         with:
           version: ${{ steps.toolchain.outputs.version }}
           llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
