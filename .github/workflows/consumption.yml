@@ -1,0 +1,120 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Consumption
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow_ref }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      gcc_tier:
+        description: Rung supplying the compiler. One rung is enough here.
+        type: string
+        required: false
+        default: stable
+      consumer_dir:
+        description: >
+          Directory holding one subdirectory per consumption model:
+          find_package, add_subdirectory, fetch_content. Each is a real CMake
+          project rather than a heredoc, so it configures outside CI too, and
+          a repository supporting only some of them simply omits the rest.
+        type: string
+        required: false
+        default: test/consumer
+      cmake_args:
+        description: Extra -D arguments for configuring the library itself.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  consume:
+    name: Consume
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # This repository's own actions by owner/repo@sha, not by ./ path: a
+      # relative reference resolves against the caller's workspace, which
+      # holds the caller's checkout and none of this.
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f1408f83d1804d1ff44aa27246994dfff5721adb
+
+      - name: Resolve the toolchain on this rung
+        id: toolchain
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f1408f83d1804d1ff44aa27246994dfff5721adb
+        with:
+          toolchain: gcc
+          tier: ${{ inputs.gcc_tier }}
+
+      - name: Require the rung to be filled
+        if: steps.toolchain.outputs.supported != 'true'
+        run: |
+          echo "::error::gcc has no ${{ inputs.gcc_tier }} rung"
+          exit 1
+
+      - name: Install GCC
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@f1408f83d1804d1ff44aa27246994dfff5721adb
+        with:
+          version: ${{ steps.toolchain.outputs.version }}
+          trunk: ${{ steps.toolchain.outputs.trunk }}
+
+      - name: Name the toolchain
+        env:
+          VERSION: ${{ steps.toolchain.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "TOOLCHAIN_CC=gcc-${VERSION}"  >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_CXX=g++-${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Report toolchain versions
+        run: |
+          "$TOOLCHAIN_CC" --version
+          "$TOOLCHAIN_CXX" --version
+          cmake --version
+
+      # Only the consumption models the README documents, so -DBUILD_TESTING=OFF
+      # drops the need for vcpkg and Boost.Test here.
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_C_COMPILER="$TOOLCHAIN_CC"
+          -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
+          -DBUILD_TESTING=OFF
+          ${{ inputs.cmake_args }}
+
+      - name: Install
+        run: cmake --install build --prefix "$GITHUB_WORKSPACE/install-prefix"
+
+      - name: Consume with find_package
+        if: hashFiles(format('{0}/find_package/CMakeLists.txt', inputs.consumer_dir)) != ''
+        run: |
+          cmake -S "${{ inputs.consumer_dir }}/find_package" -B build-find-package \
+            -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/install-prefix"
+          cmake --build build-find-package -v
+          ./build-find-package/main
+
+      - name: Consume with add_subdirectory
+        if: hashFiles(format('{0}/add_subdirectory/CMakeLists.txt', inputs.consumer_dir)) != ''
+        run: |
+          cmake -S "${{ inputs.consumer_dir }}/add_subdirectory" -B build-add-subdirectory \
+            -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
+          cmake --build build-add-subdirectory -v
+          ./build-add-subdirectory/main
+
+      - name: Consume with FetchContent
+        if: hashFiles(format('{0}/fetch_content/CMakeLists.txt', inputs.consumer_dir)) != ''
+        run: |
+          cmake -S "${{ inputs.consumer_dir }}/fetch_content" -B build-fetch-content \
+            -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
+          cmake --build build-fetch-content -v
+          ./build-fetch-content/main
