@@ -1,0 +1,159 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: GCC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow_ref }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      tiers:
+        description: Comma-separated rungs to build. Absent rungs are dropped.
+        type: string
+        required: false
+        default: stable,qualification,development
+      build_types:
+        description: Comma-separated CMake build types.
+        type: string
+        required: false
+        default: Release,Debug
+      reduce_on_pr:
+        description: Whether a pull request runs the floor and ceiling in Debug alone.
+        type: boolean
+        required: false
+        default: true
+      vcpkg_triplet:
+        description: Overlay triplet building the dependencies with the GCC under test.
+        type: string
+        required: false
+        default: x64-linux-gcc
+      cxx_flags:
+        description: Extra flags for the caller.
+        type: string
+        required: false
+        default: ""
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  # strategy.matrix takes no list and workflow_call inputs are scalars, so the
+  # rungs are resolved to JSON here and read back through fromJSON below.
+  matrix:
+    name: Resolve the ladder
+    runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.ladder.outputs.matrix }}
+    steps:
+      - id: ladder
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@a0b321ff31fc57b0bcdf59df5e90a52dd0d99ee0
+        with:
+          mode: matrix
+          toolchain: gcc
+          tiers: ${{ inputs.tiers }}
+          build_types: ${{ inputs.build_types }}
+          reduce_on_pr: ${{ inputs.reduce_on_pr }}
+
+  build:
+    name: ${{ matrix.label }} ${{ matrix.build_type }}
+    needs: matrix
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.legs) }}
+    env:
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+      # The overlay triplet is read again by the vcpkg CMake integration, so
+      # the compiler selection has to outlive the install step.
+      VCPKG_GCC_VERSION: ${{ matrix.version }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@a0b321ff31fc57b0bcdf59df5e90a52dd0d99ee0
+
+      - name: Install GCC
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@a0b321ff31fc57b0bcdf59df5e90a52dd0d99ee0
+        with:
+          version: ${{ matrix.version }}
+          trunk: ${{ matrix.trunk }}
+
+      # vcpkg rather than the distro's boost, and an overlay triplet so the
+      # dependencies get the GCC under test and its own libstdc++.
+      - name: Locate the overlay triplets
+        id: overlay
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@a0b321ff31fc57b0bcdf59df5e90a52dd0d99ee0
+
+      - name: Name the toolchain and its cache
+        env:
+          VERSION: ${{ matrix.version }}
+          LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          echo "TOOLCHAIN_CC=gcc-${VERSION}"  >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_CXX=g++-${VERSION}" >> "$GITHUB_ENV"
+          echo "VCPKG_CACHE_KEY=vcpkg-gcc-${LABEL}-" >> "$GITHUB_ENV"
+
+      - name: Report toolchain versions
+        run: |
+          "$TOOLCHAIN_CC" --version
+          "$TOOLCHAIN_CXX" --version
+          cmake --version
+
+      # vcpkg's own x-gha backend was removed, so cache its binary packages
+      # with actions/cache; the archives are named by ABI hash.
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      - name: Install the test dependencies
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          vcpkg install \
+            --triplet ${{ inputs.vcpkg_triplet }} \
+            --overlay-triplets "${{ steps.overlay.outputs.triplets }}"
+
+      # Keyed on the archives' contents: an unconditional save would add an
+      # entry per run and evict this repo's other caches.
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_C_COMPILER="$TOOLCHAIN_CC"
+          -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
+          -DCMAKE_CXX_FLAGS="${{ inputs.cxx_flags }}"
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
+          -DVCPKG_OVERLAY_TRIPLETS="${{ steps.overlay.outputs.triplets }}"
+          ${{ inputs.cmake_args }}
+
+      - name: Build
+        run: cmake --build build -v
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
