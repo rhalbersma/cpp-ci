@@ -1,0 +1,30 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: vcpkg overlay triplets
+description: >
+  Report where this repository's vcpkg overlay triplets and their chainloaded
+  toolchains live. A reusable workflow checks out the caller, not this
+  repository, so a caller could otherwise only reach these files by keeping
+  its own copy -- four copies of six files that exist to say one thing: build
+  the dependencies with the compiler under test, so the ports and the tests
+  share one standard library. An action is fetched from its own repository,
+  and GITHUB_ACTION_PATH points at it.
+
+outputs:
+  triplets:
+    description: Directory to pass to vcpkg --overlay-triplets.
+    value: ${{ steps.locate.outputs.triplets }}
+
+runs:
+  using: composite
+  steps:
+    - id: locate
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "triplets=$GITHUB_ACTION_PATH/triplets" >> "$GITHUB_OUTPUT"
+        echo "overlay triplets at $GITHUB_ACTION_PATH/triplets"
+        ls "$GITHUB_ACTION_PATH/triplets"
