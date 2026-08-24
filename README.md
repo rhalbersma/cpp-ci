@@ -26,11 +26,22 @@ compiler.
 
 ## Usage
 
-A caller supplies its own triggers, because a reusable workflow cannot carry
-them, and the stub's name becomes the required status check:
+A caller keeps one stub per workflow, because a reusable workflow cannot carry
+its own triggers. The stub's job id prefixes the status check name, so a job
+`gcc` calling a workflow whose own job is named `15 Debug` appears as
+`gcc / 15 Debug`.
 
 ```yaml
-name: Sanitizers
+name: GCC
+
+permissions:
+  contents: read
+
+# Concurrency lives here, not in the shared workflow: only the stub knows
+# whether it was reached by a push, a schedule, or an aggregating canary.
+concurrency:
+  group: ${{ github.workflow_ref }}-${{ github.ref }}
+  cancel-in-progress: true
 
 on:
   push:
@@ -38,22 +49,54 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+  # Only when an aggregating workflow calls this stub in turn.
+  workflow_call:
 
 jobs:
-  sanitizers:
-    uses: rhalbersma/cpp-ci/.github/workflows/sanitizers.yml@<sha> # v1.0.0
+  gcc:
+    uses: rhalbersma/cpp-ci/.github/workflows/gcc.yml@<sha> # <version>
 ```
 
-A repository that needs a newer compiler than stable names the rung it needs:
+A repository that cannot build on every rung names the ones it can. The
+platform workflows take a list of rungs; `sanitizers.yml` takes a single rung
+per compiler, a sanitizer being aimed at undefined behaviour rather than at
+compiler compatibility:
 
 ```yaml
+  # gcc.yml, clang.yml, clang-libc++.yml
+    with:
+      tiers: qualification,development
+      cxx_flags: -Wno-interference-size
+
+  # sanitizers.yml
     with:
       gcc_tier: development
       clang_tier: qualification
-      cxx_flags: -Wno-interference-size
 ```
 
 ## Workflows
+
+| Workflow | What it runs |
+| :------- | :----------- |
+| [`gcc.yml`](.github/workflows/gcc.yml) | The GCC ladder, each rung in each build type |
+| [`clang.yml`](.github/workflows/clang.yml) | The Clang ladder against its paired libstdc++ |
+| [`clang-libc++.yml`](.github/workflows/clang-libc++.yml) | The same ladder against libc++ |
+| [`sanitizers.yml`](.github/workflows/sanitizers.yml) | Four Linux legs; see below |
+| [`consumption.yml`](.github/workflows/consumption.yml) | `find_package`, `add_subdirectory`, `FetchContent` |
+
+The platform workflows share a shape: a first job resolves the requested rungs
+to a strategy matrix, a second builds them. On a **pull request** they run the
+floor and the ceiling in Debug alone -- the oldest compiler the code claims and
+the one that changes weekly, where breakage actually appears. The middle rung
+has a released compiler either side of it and a push covers it within the hour.
+Pushes, schedules and dispatches always run the full set. Pass
+`reduce_on_pr: false` to opt out.
+
+**Concurrency belongs to the caller.** None of these declare a concurrency
+group: inside a called workflow `github.workflow_ref` names the *calling*
+workflow, so a group defined here would land in the caller's own group and
+cancel it. The stub knows whether it was reached by a push, a schedule, or a
+canary; these do not.
 
 ### `sanitizers.yml`
 
@@ -71,34 +114,37 @@ repository that allocates gets the check rather than inheriting a suppression
 written for one that does not.
 
 UBSan runs under both compilers because the two implementations do not check
-the same set. `-fsanitize=implicit-conversion` is Clang-only — `g++` rejects it
-with *unrecognized argument to '-fsanitize=' option* — and catches the
-value-dependent truncations and sign changes that `-Wconversion` can only
-diagnose where it can prove them statically.
+the same set -- the first run of this workflow found signed overflow that GCC's
+UBSan does not diagnose. `-fsanitize=implicit-conversion` is Clang-only (`g++`
+rejects it) and catches the value-dependent truncations and sign changes that
+`-Wconversion` can only diagnose where it proves them statically. That group
+also fires on well-defined but lossy conversions, which a standard library is
+full of by design, so it runs with an ignorelist confining it to the code under
+test; without one it reports only on libstdc++.
 
-Deliberately absent: **TSan** (none of these libraries use threads), **MSan**
-(needs an instrumented libstdc++ *and* Boost.Test), **`-fsanitize=unsigned-integer-overflow`**
-(unsigned wraparound is defined and deliberate), **`_GLIBCXX_DEBUG`**
-(ABI-changing, so Boost.Test would have to be rebuilt to match), and **CFI**
-(no virtual dispatch). The sanitizers are Linux-only by necessity: MSVC offers
-ASan alone, macOS has no LeakSanitizer, and MinGW has no usable runtime.
-
-| Input | Default | Description |
-| :---- | :------ | :---------- |
-| `gcc_tier` | `stable` | Rung for the ASan and UBSan/GCC legs |
-| `clang_tier` | `stable` | Rung for the two Clang legs |
-| `cxx_flags` | `""` | Appended after the sanitizer's own flags |
-| `cmake_args` | `""` | Extra `-D` arguments for the configure step |
-| `vcpkg_triplet` | `x64-linux` | Triplet for the test dependencies |
+Deliberately absent: **TSan** (no threads), **MSan** (needs an instrumented
+libstdc++ *and* Boost.Test), **`-fsanitize=unsigned-integer-overflow`**
+(the wraparound is deliberate), **`_GLIBCXX_DEBUG`** (ABI-changing, so
+Boost.Test would need rebuilding to match), and **CFI** (no virtual dispatch).
+Linux-only by necessity: MSVC offers ASan alone, macOS has no LeakSanitizer,
+MinGW no usable runtime.
 
 ## Actions
 
 | Action | Purpose |
 | :----- | :------ |
-| `toolchain` | Resolve a (family, tier) pair to the compiler on that rung |
+| `toolchain` | Resolve rungs to compilers: one rung, or a whole strategy matrix |
 | `apt-retry` | Set the retry key apt actually reads, once per job |
 | `install-gcc` | A GCC release from the toolchain PPA, or the trunk snapshot |
 | `install-clang` | A Clang from apt.llvm.org, optionally with libc++ |
+| `vcpkg-overlay` | Locate the overlay triplets, which live here rather than in each caller |
+| `vcpkg-install` | `vcpkg install`, retried around a download vcpkg will not retry |
+
+A reusable workflow checks out the **caller**, not this repository, so anything
+a workflow needs to read from here has to arrive as an action: an action is
+fetched from its own repository and `GITHUB_ACTION_PATH` points at it. That is
+why the overlay triplets are an action rather than six files copied into four
+repositories.
 
 ## Conventions
 
