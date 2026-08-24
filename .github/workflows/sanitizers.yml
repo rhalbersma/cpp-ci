@@ -88,6 +88,7 @@ jobs:
             family: clang
             flags: -fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion -g
             options: UBSAN_OPTIONS=print_stacktrace=1
+            ignore_foreign_code: true
     env:
       VCPKG_BINARY_SOURCES: "clear;default,readwrite"
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
@@ -154,6 +155,27 @@ jobs:
             echo "TOOLCHAIN_CXX=clang++-${VERSION}" >> "$GITHUB_ENV"
           fi
           echo "VCPKG_CACHE_KEY=vcpkg-sanitizers-${LEG}-${LABEL}-" >> "$GITHUB_ENV"
+          # Defined for every leg, so Configure below can name it unconditionally.
+          echo "IGNORELIST_FLAG=" >> "$GITHUB_ENV"
+
+      # implicit-conversion flags every value-changing conversion, including
+      # the deliberate ones. libstdc++'s __formatter_int takes an absolute
+      # value by negating into the unsigned type -- correct, intentional, and
+      # not this project's to fix -- and Boost.Test does likewise. Instrument
+      # the code under test and nothing else, or the leg reports only on
+      # libraries the caller does not own.
+      - name: Ignore conversions in code the caller does not own
+        if: matrix.ignore_foreign_code
+        run: |
+          set -euo pipefail
+          cat > "$GITHUB_WORKSPACE/sanitizer-ignorelist.txt" << 'IGNORE'
+          src:*/include/c++/*
+          src:*/lib/clang/*/include/*
+          src:*/vcpkg_installed/*
+          src:*/vcpkg/buildtrees/*
+          src:*/usr/include/*
+          IGNORE
+          echo "IGNORELIST_FLAG=-fsanitize-ignorelist=$GITHUB_WORKSPACE/sanitizer-ignorelist.txt" >> "$GITHUB_ENV"
 
       - name: Report toolchain versions
         run: |
@@ -199,7 +221,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_C_COMPILER="$TOOLCHAIN_CC"
           -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
-          -DCMAKE_CXX_FLAGS="$SANITIZER_FLAGS ${{ inputs.cxx_flags }}"
+          -DCMAKE_CXX_FLAGS="$SANITIZER_FLAGS $IGNORELIST_FLAG ${{ inputs.cxx_flags }}"
           -DCMAKE_EXE_LINKER_FLAGS="$SANITIZER_FLAGS"
           -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
           -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
