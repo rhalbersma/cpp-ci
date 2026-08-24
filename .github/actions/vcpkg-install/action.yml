@@ -1,0 +1,52 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Install the test dependencies
+description: >
+  vcpkg install, retried. When the runner's CMake is older than a port
+  requires, vcpkg fetches its own from GitHub's release CDN, and that download
+  fails intermittently -- twice in one hour here, once as HTTP 403 and once as
+  an SSL connect error. vcpkg calls these "not a transient network error" and
+  declines to retry, which is exactly backwards: the URL is fine and the next
+  attempt usually succeeds. Retry the command itself, as the apt and wget
+  steps elsewhere already do.
+
+inputs:
+  triplet:
+    description: vcpkg triplet to install for.
+    required: true
+  overlay_triplets:
+    description: Directory of overlay triplets, if the triplet is one.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        TRIPLET: ${{ inputs.triplet }}
+        OVERLAY_TRIPLETS: ${{ inputs.overlay_triplets }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+
+        args=(install --triplet "$TRIPLET")
+        if [ -n "$OVERLAY_TRIPLETS" ]; then
+          args+=(--overlay-triplets "$OVERLAY_TRIPLETS")
+        fi
+
+        # Three attempts, backing off. A port that genuinely fails to build
+        # fails the same way three times and still reddens the leg; only the
+        # download flake is papered over, and the log keeps every attempt.
+        for i in 1 2 3; do
+          if vcpkg "${args[@]}"; then exit 0; fi
+          if [ "$i" -eq 3 ]; then
+            echo "::error::vcpkg install failed three times for triplet $TRIPLET"
+            exit 1
+          fi
+          echo "::warning::vcpkg install failed, retrying (attempt $i of 3)"
+          sleep $((i * 10))
+        done
