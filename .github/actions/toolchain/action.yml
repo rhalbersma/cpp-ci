@@ -5,18 +5,43 @@
 
 name: Resolve toolchain
 description: >
-  Resolve a (toolchain family, tier) pair to the compiler currently occupying
-  that rung. The rungs live in toolchains.json next to this action, so a
+  Resolve rungs of a toolchain family to the compilers currently occupying
+  them. In resolve mode that is one rung, reported as individual outputs; in
+  matrix mode it is a set of rungs crossed with build types, reported as a
+  strategy matrix. The rungs live in toolchains.json next to this action, so a
   release moves every calling repository at once: the callers name tiers, not
   versions, and never learn a version number.
 
 inputs:
+  mode:
+    description: resolve for a single rung, matrix for a strategy matrix.
+    required: false
+    default: resolve
   toolchain:
     description: Toolchain family, a top-level key of toolchains.json.
     required: true
   tier:
-    description: One of stable, qualification, development.
-    required: true
+    description: The rung, in resolve mode. One of stable, qualification, development.
+    required: false
+    default: ""
+  tiers:
+    description: Comma-separated rungs, in matrix mode. Absent rungs are dropped.
+    required: false
+    default: stable,qualification,development
+  build_types:
+    description: Comma-separated CMake build types to cross the rungs with.
+    required: false
+    default: Release,Debug
+  reduce_on_pr:
+    description: >
+      Whether a pull_request event runs a reduced matrix: the first and last
+      requested rungs -- the released floor and the moving ceiling, where
+      breakage actually appears -- in Debug alone. Pushes, schedules and
+      dispatches always run the full set, so main and the badges keep their
+      complete coverage while four repositories stop queueing behind each
+      other on every review round.
+    required: false
+    default: "true"
 
 outputs:
   # Not every family fills every rung: Apple publishes no Clang trunk, so
@@ -46,11 +71,15 @@ outputs:
   cxxflags:
     description: Flags this rung needs to find its standard library.
     value: ${{ steps.resolve.outputs.cxxflags }}
+  matrix:
+    description: Strategy matrix as JSON, in matrix mode.
+    value: ${{ steps.matrix.outputs.matrix }}
 
 runs:
   using: composite
   steps:
     - id: resolve
+      if: inputs.mode == 'resolve'
       shell: bash
       env:
         TOOLCHAIN: ${{ inputs.toolchain }}
@@ -86,3 +115,72 @@ runs:
         # shell comment, and an undefined name there fails to load the action.
         jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "$entry" >> "$GITHUB_OUTPUT"
         jq -r '"resolved \(.label)"' <<< "$entry"
+
+    - id: matrix
+      if: inputs.mode == 'matrix'
+      shell: bash
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+        TIERS: ${{ inputs.tiers }}
+        BUILD_TYPES: ${{ inputs.build_types }}
+        REDUCE_ON_PR: ${{ inputs.reduce_on_pr }}
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        set -euo pipefail
+        table="$GITHUB_ACTION_PATH/toolchains.json"
+
+        if ! jq -e --arg t "$TOOLCHAIN" 'has($t)' "$table" > /dev/null; then
+          echo "::error::unknown toolchain '$TOOLCHAIN'; known: $(jq -r 'keys | join(", ")' "$table")"
+          exit 1
+        fi
+
+        IFS=',' read -r -a tiers <<< "$TIERS"
+        IFS=',' read -r -a build_types <<< "$BUILD_TYPES"
+
+        # A rung a family never fills is dropped rather than failing: the
+        # caller asked for a ladder, not for this particular rung.
+        requested=()
+        for tier in "${tiers[@]}"; do
+          tier="${tier// /}"
+          if jq -e --arg t "$TOOLCHAIN" --arg r "$tier" '.[$t] | has($r)' "$table" > /dev/null; then
+            requested+=("$tier")
+          else
+            echo "::notice::$TOOLCHAIN has no $tier rung, dropping it"
+          fi
+        done
+        if [ ${#requested[@]} -eq 0 ]; then
+          echo "::error::none of '$TIERS' is a rung $TOOLCHAIN fills"
+          exit 1
+        fi
+
+        # The floor and the ceiling on a pull request. Everything between them
+        # has a released compiler on either side, so a break that reaches only
+        # the middle rung is one a push will still catch within the hour.
+        if [ "$EVENT_NAME" = "pull_request" ] && [ "$REDUCE_ON_PR" = "true" ]; then
+          if [ ${#requested[@]} -gt 2 ]; then
+            requested=("${requested[0]}" "${requested[${#requested[@]}-1]}")
+          fi
+          for candidate in "${build_types[@]}"; do
+            if [ "${candidate// /}" = "Debug" ]; then
+              build_types=("Debug")
+              break
+            fi
+          done
+        fi
+
+        include='[]'
+        for tier in "${requested[@]}"; do
+          entry=$(jq -c --arg t "$TOOLCHAIN" --arg r "$tier" '.[$t][$r]' "$table")
+          for build_type in "${build_types[@]}"; do
+            include=$(jq -c \
+              --argjson acc "$include" \
+              --argjson entry "$entry" \
+              --arg tier "$tier" \
+              --arg build_type "${build_type// /}" \
+              -n '$acc + [$entry + {tier: $tier, build_type: $build_type}]')
+          done
+        done
+
+        matrix=$(jq -c -n --argjson include "$include" '{include: $include}')
+        echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+        jq -r '.include | "\(length) legs: " + ([.[] | "\(.label) \(.build_type)"] | join(", "))' <<< "$matrix"
