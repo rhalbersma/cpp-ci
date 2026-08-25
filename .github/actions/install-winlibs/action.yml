@@ -1,0 +1,107 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Install a WinLibs MinGW toolchain
+description: >
+  Resolve, download and install the WinLibs build of a given GCC major
+  version, and put it on PATH. Reports found=false rather than failing when a
+  development snapshot is missing, which happens between release branches; a
+  pinned stable major that cannot be found is still an error.
+
+inputs:
+  tag_prefix:
+    description: Release tag prefix identifying the major version, e.g. "15.".
+    required: true
+  snapshot:
+    description: Whether to take the newest snapshot rather than a release.
+    required: true
+  token:
+    description: Token for the releases API, which is rate-limited anonymously.
+    required: true
+
+outputs:
+  found:
+    description: Whether a matching toolchain was installed.
+    value: ${{ steps.resolve.outputs.found }}
+  tag:
+    description: Release tag that was installed.
+    value: ${{ steps.resolve.outputs.tag }}
+
+runs:
+  using: composite
+  steps:
+    # WinLibs publishes dated releases rather than a package feed, so pinning
+    # a major version means querying the API; a tag goes stale on the respin.
+    - id: resolve
+      shell: bash
+      env:
+        TAG_PREFIX: ${{ inputs.tag_prefix }}
+        SNAPSHOT: ${{ inputs.snapshot }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        releases=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer ${GH_TOKEN}" \
+          "https://api.github.com/repos/brechtsanders/winlibs_mingw/releases?per_page=100")
+
+        if [ "$SNAPSHOT" = "true" ]; then
+          tag=$(echo "$releases" | grep '"tag_name"' | cut -d'"' -f4 | grep -i snapshot | head -1)
+        else
+          tag=$(echo "$releases" | grep '"tag_name"' | cut -d'"' -f4 | grep -E "^${TAG_PREFIX}" | grep -i ucrt | head -1)
+        fi
+
+        if [ -z "$tag" ]; then
+          echo "No matching WinLibs release found for prefix '${TAG_PREFIX}'" >&2
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          # A missing snapshot is expected between release branches; a
+          # missing pinned stable major has to fail the job.
+          [ "$SNAPSHOT" = "true" ] && exit 0 || exit 1
+        fi
+
+        asset=$(echo "$releases" | TAG="$tag" python3 -c "
+        import json, os, sys
+        releases = json.load(sys.stdin)
+        for r in releases:
+            if r['tag_name'] != os.environ['TAG']:
+                continue
+            for a in r['assets']:
+                n = a['name']
+                if n.startswith('winlibs-x86_64-posix-seh-gcc-') and 'mingw-w64ucrt-' in n and n.endswith('.7z'):
+                    print(a['browser_download_url'])
+                    sys.exit(0)
+        ")
+
+        if [ -z "$asset" ]; then
+          echo "No matching win64 UCRT asset found in release '$tag'" >&2
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          [ "$SNAPSHOT" = "true" ] && exit 0 || exit 1
+        fi
+
+        echo "found=true" >> "$GITHUB_OUTPUT"
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        echo "url=$asset" >> "$GITHUB_OUTPUT"
+
+    - if: steps.resolve.outputs.found == 'true'
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: C:\winlibs
+        key: winlibs-${{ steps.resolve.outputs.tag }}
+
+    # Into an isolated directory rather than C:/, which already has a
+    # mingw64: 7-Zip's overwrite prompt hangs with no TTY to answer it.
+    - if: steps.resolve.outputs.found == 'true' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        URL: ${{ steps.resolve.outputs.url }}
+      run: |
+        curl -fsSL --retry 3 --retry-delay 2 "$URL" -o winlibs.7z
+        7z x winlibs.7z -oC:/winlibs_extract
+        mv C:/winlibs_extract/mingw64 C:/winlibs
+        rm -rf C:/winlibs_extract
+
+    # -Encoding utf8 writes a BOM, which stops $GITHUB_PATH being parsed at
+    # all and leaves every executable unable to find the runtime DLLs.
+    - if: steps.resolve.outputs.found == 'true'
+      shell: pwsh
+      run: echo "C:\winlibs\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8NoBOM -Append
