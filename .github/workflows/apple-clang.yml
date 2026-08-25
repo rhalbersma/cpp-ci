@@ -57,7 +57,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@315b379e58eb5682c260fe519d60527adc507c54
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@760aecc5d633fba821eeeb095ab8c10e87e22dc4
         with:
           mode: matrix
           toolchain: apple-clang
@@ -106,7 +106,7 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@315b379e58eb5682c260fe519d60527adc507c54
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@760aecc5d633fba821eeeb095ab8c10e87e22dc4
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
 

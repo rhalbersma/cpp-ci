@@ -49,7 +49,11 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # Full history: the pin check resolves commits this workflow's own
+      # references name, which a shallow clone does not have.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -64,6 +68,14 @@ jobs:
 
       # This repository lints itself with the workflow it hands to others, so
       # a change that would break a caller breaks this repository's own run.
+      # Only meaningful for this repository's own history, so it is not
+      # offered to callers: it reads commits, not the checkout.
+      - name: Check this repository's own pins
+        if: github.event_name != 'workflow_call'
+        run: |
+          pip install --quiet pyyaml
+          python3 .github/scripts/check_internal_pins.py
+
       - name: Lint workflows
         env:
           PATHS: ${{ inputs.paths || '.github/workflows/*.yml' }}
