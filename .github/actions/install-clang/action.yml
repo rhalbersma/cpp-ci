@@ -23,6 +23,12 @@ inputs:
     description: Whether to install libc++ alongside, for the libc++ legs.
     required: false
     default: "false"
+  tidy:
+    description: >
+      Whether to install clang-tidy alongside. It carries run-clang-tidy of
+      the matching version too, which the tidy workflow drives.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -33,6 +39,7 @@ runs:
         VERSION: ${{ inputs.version }}
         LLVM_SUFFIX: ${{ inputs.llvm_suffix }}
         LIBCXX: ${{ inputs.libcxx }}
+        TIDY: ${{ inputs.tidy }}
       run: |
         set -euo pipefail
         wget -qO- --tries=3 --waitretry=5 --retry-on-http-error=429,500,502,503,504 https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -49,5 +56,8 @@ runs:
         )
         if [ "$LIBCXX" = "true" ]; then
           packages+=("libc++-${VERSION}-dev" "libc++abi-${VERSION}-dev")
+        fi
+        if [ "$TIDY" = "true" ]; then
+          packages+=("clang-tidy-${VERSION}")
         fi
         sudo apt-get install -y "${packages[@]}"

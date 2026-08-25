@@ -1,0 +1,77 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Clang-Format
+
+permissions:
+  contents: read
+
+# No concurrency group; see gcc.yml. It belongs to the calling stub.
+
+on:
+  workflow_call:
+    inputs:
+      tier:
+        description: >
+          Rung supplying clang-format. Deliberately its own input rather than
+          the compiler tier: a formatter release reformats the code base, so
+          moving it is a decision about the repository rather than about
+          coverage, and a caller may well want it to lag.
+        type: string
+        required: false
+        default: stable
+      paths:
+        description: Space-separated roots to search for sources.
+        type: string
+        required: false
+        default: include test
+      file_regex:
+        description: find -regex pattern selecting the files to check.
+        type: string
+        required: false
+        default: '.*\.\(hpp\|cpp\)'
+
+jobs:
+  format:
+    name: clang-format
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@a5d0e5f923e523202505a3f6fc4c7b6d1d66bb8a
+
+      - name: Resolve the toolchain on this rung
+        id: toolchain
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@a5d0e5f923e523202505a3f6fc4c7b6d1d66bb8a
+        with:
+          toolchain: clang
+          tier: ${{ inputs.tier }}
+
+      - name: Require the rung to be filled
+        if: steps.toolchain.outputs.supported != 'true'
+        run: |
+          echo "::error::clang has no ${{ inputs.tier }} rung"
+          exit 1
+
+      - name: Install Clang
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@a5d0e5f923e523202505a3f6fc4c7b6d1d66bb8a
+        with:
+          version: ${{ steps.toolchain.outputs.version }}
+          llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
+
+      # --dry-run --Werror turns a reformatting diff into a failure rather
+      # than rewriting files; the diff shows up in this job's log.
+      - name: Check formatting
+        env:
+          VERSION: ${{ steps.toolchain.outputs.version }}
+          PATHS: ${{ inputs.paths }}
+          FILE_REGEX: ${{ inputs.file_regex }}
+        run: |
+          set -euo pipefail
+          # Unquoted PATHS on purpose: it is a list of roots for find.
+          # shellcheck disable=SC2086
+          find $PATHS -regex "$FILE_REGEX" -print0 \
+            | xargs -0 "clang-format-${VERSION}" --dry-run --Werror
