@@ -28,11 +28,20 @@ on:
         type: boolean
         required: false
         default: true
-      vcpkg_triplet:
-        description: Triplet for the dependencies on every leg but the libc++ one.
+      vcpkg_gcc_triplet:
+        description: >
+          Overlay triplet for the GCC legs. Like every other workflow here,
+          the dependencies are built with the compiler under test rather than
+          the runner's default: a trunk snapshot ships its own libstdc++, and
+          a Boost.Test built against the runner's breaks at runtime.
         type: string
         required: false
-        default: x64-linux
+        default: x64-linux-gcc
+      vcpkg_clang_triplet:
+        description: Overlay triplet for the Clang legs that keep libstdc++.
+        type: string
+        required: false
+        default: x64-linux-clang
       vcpkg_libcxx_triplet:
         description: >
           Overlay triplet for the libc++ leg. Boost.Test has to be built
@@ -175,36 +184,64 @@ jobs:
           llvm_suffix: ${{ matrix.llvm_suffix }}
           libcxx: ${{ matrix.libcxx == true }}
 
-      # Only the libc++ leg needs these: its Boost.Test is rebuilt against
-      # libc++ through the chainloaded triplet, and the other legs take the
-      # runner's default standard library.
+      # Every leg needs these, not just the libc++ one: each triplet chainloads
+      # a toolchain file that builds the dependencies with the compiler under
+      # test. See the naming step below for what went wrong without them.
       - name: Locate the overlay triplets
-        if: matrix.libcxx == true
         id: overlay
         uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@8c2e595fd14e4e1841ed7de952b436d7bed45897
 
       # Named once here rather than in every expression below, and the cache
       # key with them: it has to name the rung, or a tier change would restore
-      # archives built by a different compiler. Deliberately not CC and CXX:
-      # those would also reach the vcpkg install below, which is meant to
-      # build Boost.Test with the runner's default compiler as before.
+      # archives built by a different compiler.
+      #
+      # Deliberately not CC and CXX, which would reach the vcpkg install too
+      # and select a compiler without selecting a standard library. The
+      # dependencies are pointed at the compiler under test through the
+      # overlay triplet instead, which is what every other workflow here does:
+      # the chainloaded toolchain file reads the VCPKG_*_VERSION set below.
+      #
+      # Building them with the runner's default GCC was the earlier reading of
+      # this, and it held only while the legs ran on one rung. At the GCC
+      # development rung it does not: the trunk snapshot carries its own
+      # libstdc++, and a Boost.Test built against the runner's 13 fails inside
+      # its own parameter registration, reporting a name it has read off the
+      # end of. Four of seventy-five tests, with no diagnostic from ASan --
+      # the mismatch is an ABI one, not a memory error it can see.
       - name: Name the toolchain and its cache
         env:
           FAMILY: ${{ matrix.family }}
           VERSION: ${{ matrix.version }}
           LABEL: ${{ matrix.label }}
           LEG: ${{ matrix.id }}
+          LIBCXX: ${{ matrix.libcxx == true }}
+          CXXFLAGS_RUNG: ${{ matrix.cxxflags }}
+          GCC_TRIPLET: ${{ inputs.vcpkg_gcc_triplet }}
+          CLANG_TRIPLET: ${{ inputs.vcpkg_clang_triplet }}
+          LIBCXX_TRIPLET: ${{ inputs.vcpkg_libcxx_triplet }}
         run: |
           set -euo pipefail
           if [ "$FAMILY" = "gcc" ]; then
             echo "TOOLCHAIN_CC=gcc-${VERSION}"      >> "$GITHUB_ENV"
             echo "TOOLCHAIN_CXX=g++-${VERSION}"     >> "$GITHUB_ENV"
+            echo "VCPKG_GCC_VERSION=${VERSION}"     >> "$GITHUB_ENV"
+            echo "VCPKG_TRIPLET=${GCC_TRIPLET}"     >> "$GITHUB_ENV"
           else
             echo "TOOLCHAIN_CC=clang-${VERSION}"    >> "$GITHUB_ENV"
             echo "TOOLCHAIN_CXX=clang++-${VERSION}" >> "$GITHUB_ENV"
-            # Read again by the vcpkg CMake integration, so the libc++ leg's
-            # compiler selection has to outlive the install step.
+            # Read again by the vcpkg CMake integration, so the compiler
+            # selection has to outlive the install step.
             echo "VCPKG_CLANG_VERSION=${VERSION}"   >> "$GITHUB_ENV"
+            if [ "$LIBCXX" = "true" ]; then
+              echo "VCPKG_TRIPLET=${LIBCXX_TRIPLET}" >> "$GITHUB_ENV"
+            else
+              echo "VCPKG_TRIPLET=${CLANG_TRIPLET}"  >> "$GITHUB_ENV"
+              # The rung's own flags select a libstdc++ outside /usr. They are
+              # for the legs that use one, and wrong for the libc++ leg, which
+              # installs no GCC at all -- the same reasoning the Configure
+              # step below applies to CMAKE_CXX_FLAGS.
+              echo "VCPKG_CLANG_FLAGS=${CXXFLAGS_RUNG}" >> "$GITHUB_ENV"
+            fi
           fi
           echo "VCPKG_CACHE_KEY=vcpkg-sanitizers-${LEG}-${LABEL}-" >> "$GITHUB_ENV"
           # Defined for every leg, so Configure below can name it unconditionally.
@@ -248,8 +285,8 @@ jobs:
       - name: Install the test dependencies
         uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@8c2e595fd14e4e1841ed7de952b436d7bed45897
         with:
-          triplet: ${{ matrix.libcxx == true && inputs.vcpkg_libcxx_triplet || inputs.vcpkg_triplet }}
-          overlay_triplets: ${{ matrix.libcxx == true && steps.overlay.outputs.triplets || '' }}
+          triplet: ${{ env.VCPKG_TRIPLET }}
+          overlay_triplets: ${{ steps.overlay.outputs.triplets }}
 
       # Keyed on the archives' contents: an unconditional save would add an
       # entry per run and evict this repo's other caches.
@@ -282,8 +319,8 @@ jobs:
           -DCMAKE_CXX_FLAGS="$SANITIZER_FLAGS $IGNORELIST_FLAG ${{ inputs.cxx_flags }}"
           -DCMAKE_EXE_LINKER_FLAGS="$SANITIZER_FLAGS"
           -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=${{ matrix.libcxx == true && inputs.vcpkg_libcxx_triplet || inputs.vcpkg_triplet }}
-          ${{ matrix.libcxx == true && format('-DVCPKG_OVERLAY_TRIPLETS={0}', steps.overlay.outputs.triplets) || '' }}
+          -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET"
+          -DVCPKG_OVERLAY_TRIPLETS="${{ steps.overlay.outputs.triplets }}"
           ${{ inputs.cmake_args }}
 
       - name: Build
