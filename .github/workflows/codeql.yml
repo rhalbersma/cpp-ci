@@ -1,0 +1,141 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: CodeQL
+
+# security-events to file the findings. A called workflow cannot exceed its
+# caller's permissions, so the stub has to grant this too.
+permissions:
+  contents: read
+  security-events: write
+
+# No concurrency group; see gcc.yml. It belongs to the calling stub.
+
+on:
+  workflow_call:
+    inputs:
+      gcc_tier:
+        description: >
+          Rung supplying the compiler. The extractor runs front-end side, so
+          this is the standard library the analysis sees.
+        type: string
+        required: false
+        default: stable
+      languages:
+        description: CodeQL languages to analyse.
+        type: string
+        required: false
+        default: c-cpp
+      queries:
+        description: CodeQL query suite.
+        type: string
+        required: false
+        default: security-extended
+      vcpkg_triplet:
+        description: Triplet for the test dependencies.
+        type: string
+        required: false
+        default: x64-linux
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-24.04
+    env:
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+      VCPKG_CACHE_KEY: vcpkg-codeql-
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@e195ec687fcd2b4485545122fa59d996b5c27e23
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          languages: ${{ inputs.languages }}
+          queries: ${{ inputs.queries }}
+
+      - name: Resolve the toolchain on this rung
+        id: toolchain
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e195ec687fcd2b4485545122fa59d996b5c27e23
+        with:
+          toolchain: gcc
+          tier: ${{ inputs.gcc_tier }}
+
+      - name: Require the rung to be filled
+        if: steps.toolchain.outputs.supported != 'true'
+        run: |
+          echo "::error::gcc has no ${{ inputs.gcc_tier }} rung"
+          exit 1
+
+      # The image's default GCC is older than these libraries need; the
+      # extractor reads whatever standard library the build does.
+      - name: Install GCC
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@e195ec687fcd2b4485545122fa59d996b5c27e23
+        with:
+          version: ${{ steps.toolchain.outputs.version }}
+          trunk: ${{ steps.toolchain.outputs.trunk }}
+
+      - name: Name the toolchain
+        env:
+          VERSION: ${{ steps.toolchain.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "TOOLCHAIN_CC=gcc-${VERSION}"  >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_CXX=g++-${VERSION}" >> "$GITHUB_ENV"
+
+      # vcpkg's own x-gha backend was removed, so cache its binary packages
+      # with actions/cache; the archives are named by ABI hash.
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      - name: Install the test dependencies
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e195ec687fcd2b4485545122fa59d996b5c27e23
+        with:
+          triplet: ${{ inputs.vcpkg_triplet }}
+
+      # Keyed on the archives' contents: an unconditional save would add an
+      # entry per run and evict this repo's other caches.
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      # Debug rather than unset, so NDEBUG stays undefined on purpose: -DNDEBUG
+      # rewrites every assert before the extractor, which runs front-end side.
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER="$TOOLCHAIN_CC"
+          -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
+          ${{ inputs.cmake_args }}
+
+      - name: Build
+        run: cmake --build build -v
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          category: "/language:${{ inputs.languages }}"
