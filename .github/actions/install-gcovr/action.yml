@@ -1,0 +1,23 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Install gcovr
+description: >
+  Install the pinned gcovr, with the hashes of its whole transitive closure.
+  The requirements files live beside this action rather than in each calling
+  repository: a reusable workflow checks out the caller, so four copies would
+  otherwise need bumping four times, and a hash-pinned file that drifts is
+  worse than one that does not exist.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get install -y python3-pip
+        python3 -m pip install --user --require-hashes \
+          -r "$GITHUB_ACTION_PATH/requirements.txt"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"

@@ -16,3 +16,10 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # The coverage workflow's pinned gcovr, which lives beside the action that
+  # installs it so the calling repositories carry no copy to bump.
+  - package-ecosystem: pip
+    directory: /.github/actions/install-gcovr
+    schedule:
+      interval: monthly
