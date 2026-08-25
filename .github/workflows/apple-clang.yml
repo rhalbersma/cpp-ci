@@ -1,0 +1,140 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Apple Clang
+
+permissions:
+  contents: read
+
+# No concurrency group; see gcc.yml. It belongs to the calling stub.
+
+on:
+  workflow_call:
+    inputs:
+      tiers:
+        description: >
+          Comma-separated rungs to build. This family has no development rung
+          -- Apple publishes no open-source Clang trunk -- so asking for the
+          whole ladder drops it with a notice rather than failing.
+        type: string
+        required: false
+        default: stable,qualification,development
+      build_types:
+        description: Comma-separated CMake build types.
+        type: string
+        required: false
+        default: Release,Debug
+      reduce_on_pr:
+        description: Whether a pull request runs the floor and ceiling in Debug alone.
+        type: boolean
+        required: false
+        default: true
+      vcpkg_triplet:
+        description: >
+          Triplet for the dependencies. arm64-osx builds them with the
+          selected Xcode, so its libc++ ABI matches the compiler under test.
+        type: string
+        required: false
+        default: arm64-osx
+      cxx_flags:
+        description: Extra flags for the caller.
+        type: string
+        required: false
+        default: ""
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  ladder:
+    name: Resolve the ladder
+    runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.ladder.outputs.matrix }}
+    steps:
+      - id: ladder
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@315b379e58eb5682c260fe519d60527adc507c54
+        with:
+          mode: matrix
+          toolchain: apple-clang
+          tiers: ${{ inputs.tiers }}
+          build_types: ${{ inputs.build_types }}
+          reduce_on_pr: ${{ inputs.reduce_on_pr }}
+
+  build:
+    name: ${{ matrix.label }} ${{ matrix.build_type }}
+    needs: ladder
+    # The runner is the rung: each Xcode ships on the macOS image that carries
+    # it, so the image comes out of the ladder rather than being fixed here.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.ladder.outputs.legs) }}
+    env:
+      # Selects the Xcode, and with it the compiler: nothing is installed on
+      # these runners, the images ship several and this picks one.
+      DEVELOPER_DIR: ${{ matrix.developer_dir }}
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Name the cache
+        env:
+          OS: ${{ matrix.os }}
+        run: echo "VCPKG_CACHE_KEY=vcpkg-apple-clang-${OS}-" >> "$GITHUB_ENV"
+
+      - name: Report toolchain versions
+        run: |
+          xcodebuild -version
+          clang++ --version
+          cmake --version
+
+      # vcpkg's own x-gha backend was removed, so cache its binary packages
+      # with actions/cache; the archives are named by ABI hash.
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      - name: Install the test dependencies
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@315b379e58eb5682c260fe519d60527adc507c54
+        with:
+          triplet: ${{ inputs.vcpkg_triplet }}
+
+      # Keyed on the archives' contents: an unconditional save would add an
+      # entry per run and evict this repo's other caches.
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      # No compiler named: DEVELOPER_DIR has already chosen it, and naming it
+      # again would only risk disagreeing.
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_CXX_FLAGS="${{ inputs.cxx_flags }}"
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
+          ${{ inputs.cmake_args }}
+
+      - name: Build
+        run: cmake --build build -v
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
