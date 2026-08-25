@@ -8,38 +8,28 @@ name: Sanitizers
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow_ref }}-${{ github.ref }}
-  cancel-in-progress: true
+# No concurrency group; see gcc.yml. It belongs to the calling stub.
 
-# Callable only: the legs below build the caller's CMake project, of which
-# this repository has none. The caller supplies the push and pull_request
-# triggers, in a stub whose name becomes the required status check.
 on:
   workflow_call:
     inputs:
-      gcc_tier:
-        description: Rung supplying the GCC for the ASan and UBSan/GCC legs.
+      gcc_tiers:
+        description: Comma-separated rungs for the legs GCC runs.
         type: string
         required: false
-        default: stable
-      clang_tier:
-        description: Rung supplying the Clang for the two Clang legs.
+        default: stable,qualification,development
+      clang_tiers:
+        description: Comma-separated rungs for the legs Clang runs.
         type: string
         required: false
-        default: stable
-      cxx_flags:
-        description: Flags appended after the sanitizer's own, for the caller.
-        type: string
+        default: stable,qualification,development
+      reduce_on_pr:
+        description: Whether a pull request runs the floor and ceiling alone.
+        type: boolean
         required: false
-        default: ""
-      cmake_args:
-        description: Extra -D arguments for the configure step.
-        type: string
-        required: false
-        default: ""
+        default: true
       vcpkg_triplet:
-        description: vcpkg triplet to install the test dependencies for.
+        description: Triplet for the dependencies on every leg but the libc++ one.
         type: string
         required: false
         default: x64-linux
@@ -52,67 +42,108 @@ on:
         type: string
         required: false
         default: x64-linux-libcxx
+      cxx_flags:
+        description: Flags appended after the sanitizer's own, for the caller.
+        type: string
+        required: false
+        default: ""
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
 
 jobs:
+  # The legs are crossed with the ladder here rather than written out: a
+  # sanitizer's instrumentation is not fixed across releases any more than it
+  # is across compilers. GCC's UBSan does not diagnose the signed overflow
+  # Clang's does on a _BitInt(2), and a bit-precise library has no reason to
+  # assume one GCC agrees with the next about that either.
+  ladder:
+    name: Resolve the ladder
+    runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.cross.outputs.matrix }}
+    steps:
+      - id: gcc
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@8c2e595fd14e4e1841ed7de952b436d7bed45897
+        with:
+          mode: matrix
+          toolchain: gcc
+          tiers: ${{ inputs.gcc_tiers }}
+          build_types: Debug
+          reduce_on_pr: ${{ inputs.reduce_on_pr }}
+
+      - id: clang
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@8c2e595fd14e4e1841ed7de952b436d7bed45897
+        with:
+          mode: matrix
+          toolchain: clang
+          tiers: ${{ inputs.clang_tiers }}
+          build_types: Debug
+          reduce_on_pr: ${{ inputs.reduce_on_pr }}
+
+      - id: cross
+        shell: bash
+        env:
+          GCC_RUNGS: ${{ steps.gcc.outputs.matrix }}
+          CLANG_RUNGS: ${{ steps.clang.outputs.matrix }}
+        run: |
+          set -euo pipefail
+
+          # Leak detection deliberately left on. A library that allocates
+          # nothing has nothing to report, and the repositories that do
+          # allocate are the ones that leg exists for.
+          #
+          # ASan runs against both standard libraries. Its detection is a
+          # shared runtime, so a second compiler alone would re-run one check
+          # -- but the container-overflow annotations are not shared: libc++
+          # instruments vector, string and deque, libstdc++ annotates vector
+          # alone and only under _GLIBCXX_SANITIZE_VECTOR.
+          #
+          # UBSan twice over, because the two implementations do not check the
+          # same set and a clean run under one says nothing about the other.
+          #
+          # implicit-conversion is Clang's alone -- g++ rejects the group --
+          # and catches the value-dependent truncations and sign changes that
+          # -Wconversion can only diagnose where it proves them statically.
+          legs='[
+            {"id":"asan","name":"ASan + LSan","compiler":"GCC","family":"gcc",
+             "flags":"-fsanitize=address -fno-omit-frame-pointer -g",
+             "options":"ASAN_OPTIONS=detect_leaks=1"},
+            {"id":"asan-libcxx","name":"ASan + LSan","compiler":"Clang libc++","family":"clang","libcxx":true,
+             "flags":"-fsanitize=address -fno-omit-frame-pointer -g -stdlib=libc++",
+             "options":"ASAN_OPTIONS=detect_leaks=1"},
+            {"id":"ubsan-gcc","name":"UBSan","compiler":"GCC","family":"gcc",
+             "flags":"-fsanitize=undefined -fno-sanitize-recover=undefined -g",
+             "options":"UBSAN_OPTIONS=print_stacktrace=1"},
+            {"id":"ubsan-clang","name":"UBSan","compiler":"Clang","family":"clang",
+             "flags":"-fsanitize=undefined -fno-sanitize-recover=undefined -g",
+             "options":"UBSAN_OPTIONS=print_stacktrace=1"},
+            {"id":"implicit-conversion","name":"Implicit conversion","compiler":"Clang","family":"clang",
+             "ignore_foreign_code":true,
+             "flags":"-fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion -g",
+             "options":"UBSAN_OPTIONS=print_stacktrace=1"}
+          ]'
+
+          matrix=$(jq -c -n \
+            --argjson legs "$legs" \
+            --argjson gcc "$GCC_RUNGS" \
+            --argjson clang "$CLANG_RUNGS" \
+            '{include: [ $legs[] as $leg
+               | (if $leg.family == "gcc" then $gcc.include else $clang.include end)[] as $rung
+               | $leg + $rung ]}')
+
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          jq -r '.include | "\(length) legs:", (.[] | "  \(.name) / \(.compiler) \(.label)")' <<< "$matrix"
+
   build:
-    name: ${{ matrix.name }} / ${{ matrix.compiler }} ${{ matrix.family == 'gcc' && inputs.gcc_tier || inputs.clang_tier }}
+    name: ${{ matrix.name }} / ${{ matrix.compiler }} ${{ matrix.label }}
+    needs: ladder
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          # Leak detection deliberately left on. A library that allocates
-          # nothing has nothing to report, and the repositories that do
-          # allocate are the ones this leg exists for.
-          - id: asan
-            name: ASan + LSan
-            compiler: GCC
-            family: gcc
-            flags: -fsanitize=address -fno-omit-frame-pointer -g
-            options: ASAN_OPTIONS=detect_leaks=1
-
-          # The same sanitizer against the other standard library, which is
-          # where the difference lives. ASan's detection is a shared runtime,
-          # so a second compiler would re-run one check; the container-overflow
-          # annotations are not shared. libc++ instruments vector, string and
-          # deque; libstdc++ annotates vector alone, and only under
-          # _GLIBCXX_SANITIZE_VECTOR. An overflow inside a std::string is
-          # therefore invisible to the leg above and visible to this one.
-          - id: asan-libcxx
-            name: ASan + LSan
-            compiler: Clang libc++
-            family: clang
-            libcxx: true
-            flags: -fsanitize=address -fno-omit-frame-pointer -g -stdlib=libc++
-            options: ASAN_OPTIONS=detect_leaks=1
-
-          # UBSan twice over: the two implementations do not check the same
-          # set, so a clean run under one says nothing about the other.
-          - id: ubsan-gcc
-            name: UBSan
-            compiler: GCC
-            family: gcc
-            flags: -fsanitize=undefined -fno-sanitize-recover=undefined -g
-            options: UBSAN_OPTIONS=print_stacktrace=1
-
-          - id: ubsan-clang
-            name: UBSan
-            compiler: Clang
-            family: clang
-            flags: -fsanitize=undefined -fno-sanitize-recover=undefined -g
-            options: UBSAN_OPTIONS=print_stacktrace=1
-
-          # Clang-only: g++ rejects this group outright. It catches the
-          # value-dependent truncations and sign changes that -Wconversion
-          # can only warn about when it can prove them statically, which for
-          # bit-manipulation code is most of the interesting cases.
-          - id: implicit-conversion
-            name: Implicit conversion
-            compiler: Clang
-            family: clang
-            flags: -fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion -g
-            options: UBSAN_OPTIONS=print_stacktrace=1
-            ignore_foreign_code: true
+      matrix: ${{ fromJSON(needs.ladder.outputs.legs) }}
     env:
       VCPKG_BINARY_SOURCES: "clear;default,readwrite"
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
@@ -124,40 +155,24 @@ jobs:
       # relative reference resolves against the caller's workspace, which
       # holds the caller's checkout and none of this. The pin keeps a caller's
       # pinned workflow from silently pulling actions off a moving main.
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@75cbc318c1a50628d292011bf69a88a0406904cb
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@8c2e595fd14e4e1841ed7de952b436d7bed45897
 
-      - name: Resolve the toolchain on this rung
-        id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@75cbc318c1a50628d292011bf69a88a0406904cb
-        with:
-          toolchain: ${{ matrix.family }}
-          tier: ${{ matrix.family == 'gcc' && inputs.gcc_tier || inputs.clang_tier }}
-
-      # Both families fill all three rungs today, so an unfilled one here is a
-      # caller naming a tier that this family will never have: fail, rather
-      # than pass a job that compiled nothing.
-      - name: Require the rung to be filled
-        if: steps.toolchain.outputs.supported != 'true'
-        run: |
-          echo "::error::${{ matrix.family }} has no ${{ matrix.family == 'gcc' && inputs.gcc_tier || inputs.clang_tier }} rung"
-          exit 1
-
-      # On the Clang legs this is the paired libstdc++ rather than a compiler,
-      # the div_result formatter needing its std::formatter<tuple>.
+      # On the Clang legs this is the paired libstdc++ rather than a compiler.
+      # The libc++ leg skips it: libc++ replaces libstdc++, which is its point.
       - name: Install GCC
         if: matrix.libcxx != true
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@75cbc318c1a50628d292011bf69a88a0406904cb
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@8c2e595fd14e4e1841ed7de952b436d7bed45897
         with:
-          version: ${{ matrix.family == 'gcc' && steps.toolchain.outputs.version || steps.toolchain.outputs.gcc_version }}
-          trunk: ${{ matrix.family == 'gcc' && steps.toolchain.outputs.trunk || steps.toolchain.outputs.gcc_trunk }}
+          version: ${{ matrix.family == 'gcc' && matrix.version || matrix.gcc_version }}
+          trunk: ${{ matrix.family == 'gcc' && matrix.trunk || matrix.gcc_trunk }}
           symlink_binaries: ${{ matrix.family == 'gcc' }}
 
       - name: Install Clang
         if: matrix.family == 'clang'
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@75cbc318c1a50628d292011bf69a88a0406904cb
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@8c2e595fd14e4e1841ed7de952b436d7bed45897
         with:
-          version: ${{ steps.toolchain.outputs.version }}
-          llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
+          version: ${{ matrix.version }}
+          llvm_suffix: ${{ matrix.llvm_suffix }}
           libcxx: ${{ matrix.libcxx == true }}
 
       # Only the libc++ leg needs these: its Boost.Test is rebuilt against
@@ -166,7 +181,7 @@ jobs:
       - name: Locate the overlay triplets
         if: matrix.libcxx == true
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@75cbc318c1a50628d292011bf69a88a0406904cb
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@8c2e595fd14e4e1841ed7de952b436d7bed45897
 
       # Named once here rather than in every expression below, and the cache
       # key with them: it has to name the rung, or a tier change would restore
@@ -176,8 +191,8 @@ jobs:
       - name: Name the toolchain and its cache
         env:
           FAMILY: ${{ matrix.family }}
-          VERSION: ${{ steps.toolchain.outputs.version }}
-          LABEL: ${{ steps.toolchain.outputs.label }}
+          VERSION: ${{ matrix.version }}
+          LABEL: ${{ matrix.label }}
           LEG: ${{ matrix.id }}
         run: |
           set -euo pipefail
@@ -187,13 +202,11 @@ jobs:
           else
             echo "TOOLCHAIN_CC=clang-${VERSION}"    >> "$GITHUB_ENV"
             echo "TOOLCHAIN_CXX=clang++-${VERSION}" >> "$GITHUB_ENV"
+            # Read again by the vcpkg CMake integration, so the libc++ leg's
+            # compiler selection has to outlive the install step.
+            echo "VCPKG_CLANG_VERSION=${VERSION}"   >> "$GITHUB_ENV"
           fi
           echo "VCPKG_CACHE_KEY=vcpkg-sanitizers-${LEG}-${LABEL}-" >> "$GITHUB_ENV"
-          # Read again by the vcpkg CMake integration, so the libc++ leg's
-          # compiler selection has to outlive the install step.
-          if [ "$FAMILY" = "clang" ]; then
-            echo "VCPKG_CLANG_VERSION=${VERSION}" >> "$GITHUB_ENV"
-          fi
           # Defined for every leg, so Configure below can name it unconditionally.
           echo "IGNORELIST_FLAG=" >> "$GITHUB_ENV"
 
@@ -233,7 +246,7 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@75cbc318c1a50628d292011bf69a88a0406904cb
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@8c2e595fd14e4e1841ed7de952b436d7bed45897
         with:
           triplet: ${{ matrix.libcxx == true && inputs.vcpkg_libcxx_triplet || inputs.vcpkg_triplet }}
           overlay_triplets: ${{ matrix.libcxx == true && steps.overlay.outputs.triplets || '' }}
@@ -255,7 +268,7 @@ jobs:
       # sanitizer's own, so a repository can override what it chose.
       - name: Configure
         env:
-          SANITIZER_FLAGS: ${{ matrix.flags }} ${{ steps.toolchain.outputs.cxxflags }}
+          SANITIZER_FLAGS: ${{ matrix.flags }} ${{ matrix.cxxflags }}
         run: >
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Debug

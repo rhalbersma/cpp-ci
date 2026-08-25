@@ -58,9 +58,8 @@ jobs:
 ```
 
 A repository that cannot build on every rung names the ones it can. The
-platform workflows take a list of rungs; `sanitizers.yml` takes a single rung
-per compiler, a sanitizer being aimed at undefined behaviour rather than at
-compiler compatibility:
+platform workflows take one list of rungs; `sanitizers.yml` takes one per
+compiler family, since its legs are split between them:
 
 ```yaml
   # gcc.yml, clang.yml, clang-libc++.yml
@@ -70,8 +69,8 @@ compiler compatibility:
 
   # sanitizers.yml
     with:
-      gcc_tier: development
-      clang_tier: qualification
+      gcc_tiers: qualification,development
+      clang_tiers: development
 ```
 
 ## Workflows
@@ -100,7 +99,12 @@ canary; these do not.
 
 ### `sanitizers.yml`
 
-Four Linux legs, each building and running the caller's test suite in Debug:
+Five Linux legs, each building and running the caller's test suite in Debug,
+and each run on every rung its compiler fills -- fifteen jobs on a push, ten on
+a pull request. A sanitizer's instrumentation is no more fixed across releases
+than across compilers: GCC's UBSan does not diagnose the signed overflow
+Clang's does on a `_BitInt(2)`, and a bit-precise library has no reason to
+assume one GCC agrees with the next about that either.
 
 | Leg | Compiler | Flags |
 | :-- | :------- | :---- |
