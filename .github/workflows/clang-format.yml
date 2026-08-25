@@ -72,7 +72,8 @@ jobs:
           FILE_REGEX: ${{ inputs.file_regex }}
         run: |
           set -euo pipefail
-          # Unquoted PATHS on purpose: it is a list of roots for find.
-          # shellcheck disable=SC2086
-          find $PATHS -regex "$FILE_REGEX" -print0 \
+          # read -ra rather than an unquoted expansion, which would glob the
+          # roots against the working tree as well as splitting them.
+          read -ra roots <<< "$PATHS"
+          find "${roots[@]}" -regex "$FILE_REGEX" -print0 \
             | xargs -0 "clang-format-${VERSION}" --dry-run --Werror

@@ -165,8 +165,12 @@ jobs:
           EXCLUDE: ${{ inputs.exclude }}
         run: |
           set -euo pipefail
+          # read -ra, not an unquoted expansion: a bare "for p in $EXCLUDE"
+          # splits AND globs, and "test/.*" then matches test/.clang-tidy and
+          # stops being a regex, leaving the test tree in the report.
+          read -ra patterns <<< "$EXCLUDE"
           excludes=()
-          for pattern in $EXCLUDE; do
+          for pattern in "${patterns[@]}"; do
             excludes+=(--exclude "$pattern")
           done
           gcovr --root . \

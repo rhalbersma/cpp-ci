@@ -202,8 +202,11 @@ jobs:
           HEADER_EXCLUDE: ${{ inputs.header_exclude }}
           ADAPTED_DIRS: ${{ inputs.adapted_dirs }}
         run: |
+          # read -ra, for the reason given in coverage.yml: an unquoted
+          # expansion globs as well as splits.
+          read -ra adapted_dirs <<< "$ADAPTED_DIRS"
           adapted=()
-          for dir in $ADAPTED_DIRS; do
+          for dir in "${adapted_dirs[@]}"; do
             if [ -d "$dir" ]; then
               adapted+=(-isystem "$dir")
             fi
