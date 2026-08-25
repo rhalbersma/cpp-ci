@@ -40,9 +40,20 @@ def main() -> int:
                     continue
                 path, _, sha = uses[len(REPO):].partition("@")
 
-                if at(sha, f"{path}/action.yml") is None:
+                manifest = at(sha, f"{path}/action.yml")
+                if manifest is None:
                     failures.append(f"{wf.name}: {path} does not exist at {sha[:7]}")
                     continue
+
+                # An input added in the same commit as its first caller is the
+                # same mistake one level down: the action resolves, and then
+                # ignores what it was handed.
+                declared = set(yaml.safe_load(manifest).get("inputs") or {})
+                for given in (step.get("with") or {}):
+                    if given not in declared:
+                        failures.append(
+                            f"{wf.name}: {path} at {sha[:7]} has no input '{given}'"
+                        )
 
                 # The ladder is resolved from data, so the pin has to carry
                 # the family as well as the action that reads it.
