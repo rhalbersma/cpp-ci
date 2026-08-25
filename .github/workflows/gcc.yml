@@ -157,3 +157,30 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  # One check name that does not move, for branch protection to require.
+  #
+  # The legs are named for compiler versions -- "15 Debug", "24-SVN Debug" --
+  # and the tier ladder slides those forward by design: the day GCC 16 becomes
+  # stable, "15 Debug" stops existing and a required check naming it waits
+  # forever. The reduction on pull requests moves them too, so the names a
+  # pull request reports are not even the names a push reports.
+  #
+  # This job's name does not depend on the matrix, so a caller requires
+  # "<its job id> / all" once and never revisits it. always() so it runs when
+  # a leg failed rather than being skipped with it -- which is the whole point.
+  all:
+    name: all
+    needs: build
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless every leg succeeded
+        env:
+          RESULT: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+          echo "legs: $RESULT"
+          # Only success passes. A skipped matrix means the ladder job failed
+          # or emitted nothing, which is a red run, not an absent one.
+          test "$RESULT" = success
