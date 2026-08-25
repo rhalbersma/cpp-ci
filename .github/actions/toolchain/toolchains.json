@@ -53,5 +53,25 @@
       "os": "macos-26",
       "developer_dir": "/Applications/Xcode_26.6.app/Contents/Developer"
     }
+  },
+  "msvc": {
+    "stable": {
+      "label": "2022",
+      "os": "windows-2022",
+      "generator": "Visual Studio 17 2022",
+      "preview_channel": "false"
+    },
+    "qualification": {
+      "label": "2026",
+      "os": "windows-2025",
+      "generator": "Visual Studio 18 2026",
+      "preview_channel": "false"
+    },
+    "development": {
+      "label": "2026-Preview",
+      "os": "windows-2025",
+      "generator": "Visual Studio 18 2026",
+      "preview_channel": "true"
+    }
   }
 }

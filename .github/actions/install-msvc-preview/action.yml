@@ -1,0 +1,87 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Install the MSVC Preview toolset
+description: >
+  Add the Preview VC toolset to the Visual Studio the runner already has, and
+  report the version number CMake needs to select it. Unlike the other
+  families, the development rung here is a preview *channel* of the same
+  Visual Studio generation rather than a newer one, so nothing new is
+  installed -- an optional component is added to the instance in place.
+
+outputs:
+  toolset:
+    description: >
+      Version number of the installed preview toolset, for CMake's
+      -T version=... . CMake cannot be told "version=Preview", so the number
+      has to be discovered.
+    value: ${{ steps.install.outputs.toolset }}
+
+runs:
+  using: composite
+  steps:
+    # --nocache would re-download the payload every run; the channel
+    # manifest's ETag invalidates on the same schedule, so it is the key.
+    - id: manifest
+      shell: pwsh
+      run: |
+        $resp = Invoke-WebRequest -Uri 'https://aka.ms/vs/18/pre/channel' -Method Head -UseBasicParsing
+        $version = $resp.Headers['ETag']
+        if (-not $version) { $version = $resp.Headers['Last-Modified'] }
+        Write-Host "Channel manifest version: $version"
+        echo "version=$version" >> $env:GITHUB_OUTPUT
+
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: C:\ProgramData\Microsoft\VisualStudio\Packages
+        key: vs-preview-packages-${{ runner.os }}-${{ steps.manifest.outputs.version }}
+        restore-keys: |
+          vs-preview-packages-${{ runner.os }}-
+
+    # An optional component on the Stable channel, so "modify" adds it.
+    # setup.exe is GUI-subsystem, so & does not wait for it.
+    - id: install
+      shell: pwsh
+      run: |
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $instance = & $vswhere -products * -format json | ConvertFrom-Json | Select-Object -First 1
+        if (-not $instance) {
+          Write-Host "No VS instance found by vswhere to add the Preview toolset to"
+          exit 1
+        }
+        $installPath = $instance.installationPath
+
+        $setup = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+        $proc = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList (
+          'modify', '--quiet', '--norestart',
+          '--installPath', "`"$installPath`"",
+          '--add', 'Microsoft.VisualStudio.Component.VC.Preview.Tools.x86.x64'
+        )
+        # 3010 = success, reboot required
+        $ok = $proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010
+
+        $verify = & $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Preview.Tools.x86.x64 -format json | ConvertFrom-Json
+        if (-not $ok -or -not $verify) {
+          Write-Host "Preview toolset not present after setup.exe modify (exit code $($proc.ExitCode))."
+          Write-Host "Toolsets present under VC\Tools\MSVC:"
+          Get-ChildItem "$installPath\VC\Tools\MSVC" -Directory -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name)" }
+          $log = Get-ChildItem "$env:TEMP\dd_*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($log) {
+            Write-Host "--- $($log.FullName) (last 150 lines) ---"
+            Get-Content $log.FullName -Tail 150 | ForEach-Object { Write-Host $_ }
+          } else {
+            Write-Host "No dd_*.log found under $env:TEMP"
+          }
+          exit 1
+        }
+
+        # CMake can't be told "version=Preview"; find the preview
+        # toolset's actual version number (the highest one installed).
+        $default = (Get-Content "$installPath\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+        $newest = Get-ChildItem "$installPath\VC\Tools\MSVC" -Directory |
+          Sort-Object { [version]$_.Name } -Descending |
+          Select-Object -First 1 -ExpandProperty Name
+        Write-Host "Default toolset: $default; newest (preview) toolset: $newest"
+        echo "toolset=$newest" >> $env:GITHUB_OUTPUT

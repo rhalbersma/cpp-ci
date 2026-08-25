@@ -1,0 +1,193 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+# Named for the toolchain rather than the compiler: MSVC's cl and the clang-cl
+# each Visual Studio bundles are the same build in every respect but the -T
+# argument, so they are one workflow with two callers rather than two files
+# that would drift.
+name: Visual Studio
+
+permissions:
+  contents: read
+
+# No concurrency group; see gcc.yml. It belongs to the calling stub.
+
+on:
+  workflow_call:
+    inputs:
+      tiers:
+        description: >
+          Comma-separated rungs. The development rung here is a preview
+          channel of the same Visual Studio generation, not a newer one.
+        type: string
+        required: false
+        default: stable,qualification,development
+      build_types:
+        description: Comma-separated CMake build types.
+        type: string
+        required: false
+        default: Release,Debug
+      reduce_on_pr:
+        description: Whether a pull request runs the floor and ceiling in Debug alone.
+        type: boolean
+        required: false
+        default: true
+      toolset:
+        description: >
+          CMake -T value on the released rungs. Empty selects the default
+          MSVC toolset; "ClangCL,host=x64" selects the bundled clang-cl.
+        type: string
+        required: false
+        default: host=x64
+      preview_toolset_prefix:
+        description: >
+          Prepended to "version=<n>,host=x64" on the preview rung. Empty for
+          MSVC, "ClangCL," to put clang-cl in front of the preview STL.
+        type: string
+        required: false
+        default: ""
+      cache_prefix:
+        description: Distinguishes this caller's vcpkg cache from the other's.
+        type: string
+        required: false
+        default: msvc
+      vcpkg_triplet:
+        description: Triplet for the dependencies.
+        type: string
+        required: false
+        default: x64-windows
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  ladder:
+    name: Resolve the ladder
+    runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.ladder.outputs.matrix }}
+    steps:
+      - id: ladder
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@45377c628f22baff603196d4c2d036ea3bd410f6
+        with:
+          mode: matrix
+          toolchain: msvc
+          tiers: ${{ inputs.tiers }}
+          build_types: ${{ inputs.build_types }}
+          reduce_on_pr: ${{ inputs.reduce_on_pr }}
+
+  build:
+    name: ${{ matrix.label }} ${{ matrix.build_type }}
+    needs: ladder
+    # VS 2026 needs the newer image; the rung carries its own runner.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.ladder.outputs.legs) }}
+    env:
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Name the cache
+        shell: bash
+        env:
+          PREFIX: ${{ inputs.cache_prefix }}
+          LABEL: ${{ matrix.label }}
+        run: echo "VCPKG_CACHE_KEY=vcpkg-${PREFIX}-${LABEL}-" >> "$GITHUB_ENV"
+
+      - name: Install the MSVC Preview toolset
+        if: matrix.preview_channel == 'true'
+        id: preview
+        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@45377c628f22baff603196d4c2d036ea3bd410f6
+
+      - name: Report toolchain versions
+        shell: pwsh
+        env:
+          PREVIEW_TOOLSET: ${{ steps.preview.outputs.toolset }}
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $instance = & $vswhere -products * -format json | ConvertFrom-Json | Select-Object -First 1
+          if (-not $instance) {
+            Write-Host "No Visual Studio instance found by vswhere"
+            exit 1
+          }
+          $installPath = $instance.installationPath
+          Write-Host "Visual Studio: $($instance.displayName) $($instance.installationVersion)"
+          $toolset = if ($env:PREVIEW_TOOLSET) {
+            $env:PREVIEW_TOOLSET
+          } else {
+            (Get-Content "$installPath\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          }
+          Write-Host "MSVC toolset: $toolset"
+          & "$installPath\VC\Tools\MSVC\$toolset\bin\Hostx64\x64\cl.exe" /Bv
+          cmake --version
+
+      # vcpkg's own x-gha backend was removed, so cache its binary packages
+      # with actions/cache; the archives are named by ABI hash.
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      # MSVC has been binary compatible across toolsets since VS 2015, so the
+      # stable-built Boost links against the preview leg too.
+      - name: Install the test dependencies
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@45377c628f22baff603196d4c2d036ea3bd410f6
+        with:
+          triplet: ${{ inputs.vcpkg_triplet }}
+
+      # Keyed on the archives' contents: an unconditional save would add an
+      # entry per run and evict this repo's other caches.
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      - name: Configure
+        if: matrix.preview_channel != 'true'
+        shell: pwsh
+        run: >
+          cmake -S . -B build
+          -G "${{ matrix.generator }}" -A x64
+          -T "${{ inputs.toolset }}"
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
+          ${{ inputs.cmake_args }}
+
+      # CMake cannot be told "version=Preview", so the number the install
+      # action discovered is spelled out here.
+      - name: Configure (preview toolset)
+        if: matrix.preview_channel == 'true'
+        shell: pwsh
+        env:
+          PREVIEW_TOOLSET: ${{ steps.preview.outputs.toolset }}
+        run: >
+          cmake -S . -B build
+          -G "${{ matrix.generator }}" -A x64
+          -T "${{ inputs.preview_toolset_prefix }}version=$env:PREVIEW_TOOLSET,host=x64"
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
+          ${{ inputs.cmake_args }}
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config ${{ matrix.build_type }} -v
+
+      - name: Test
+        shell: pwsh
+        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
