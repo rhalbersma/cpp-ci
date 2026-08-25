@@ -73,5 +73,25 @@
       "generator": "Visual Studio 18 2026",
       "preview_channel": "true"
     }
+  },
+  "mingw": {
+    "stable": {
+      "label": "15",
+      "os": "windows-2022",
+      "tag_prefix": "15.",
+      "snapshot": "false"
+    },
+    "qualification": {
+      "label": "16",
+      "os": "windows-2022",
+      "tag_prefix": "16.",
+      "snapshot": "false"
+    },
+    "development": {
+      "label": "17-SVN",
+      "os": "windows-2022",
+      "tag_prefix": "",
+      "snapshot": "true"
+    }
   }
 }

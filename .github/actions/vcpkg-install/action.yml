@@ -25,7 +25,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - shell: bash
+    # Two spellings of one loop. The Windows legs run pwsh, as the workflows
+    # they came from did: bash exists on those runners but the cache path
+    # arrives with mixed separators, and PowerShell is what the rest of those
+    # jobs speak.
+    - if: runner.os != 'Windows'
+      shell: bash
       env:
         TRIPLET: ${{ inputs.triplet }}
         OVERLAY_TRIPLETS: ${{ inputs.overlay_triplets }}
@@ -50,3 +55,30 @@ runs:
           echo "::warning::vcpkg install failed, retrying (attempt $i of 3)"
           sleep $((i * 10))
         done
+
+    - if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        TRIPLET: ${{ inputs.triplet }}
+        OVERLAY_TRIPLETS: ${{ inputs.overlay_triplets }}
+      run: |
+        # So a non-zero exit from vcpkg sets LASTEXITCODE for the loop to read
+        # rather than terminating the step on the first attempt.
+        $PSNativeCommandUseErrorActionPreference = $false
+        New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+        $vcpkgArgs = @('install', '--triplet', $env:TRIPLET)
+        if ($env:OVERLAY_TRIPLETS) {
+          $vcpkgArgs += @('--overlay-triplets', $env:OVERLAY_TRIPLETS)
+        }
+
+        foreach ($i in 1..3) {
+          & vcpkg @vcpkgArgs
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          if ($i -eq 3) {
+            Write-Host "::error::vcpkg install failed three times for triplet $env:TRIPLET"
+            exit 1
+          }
+          Write-Host "::warning::vcpkg install failed, retrying (attempt $i of 3)"
+          Start-Sleep -Seconds ($i * 10)
+        }
