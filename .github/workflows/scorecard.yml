@@ -15,9 +15,27 @@ permissions:
   id-token: write
   actions: read
 
-# No concurrency group; see gcc.yml. It belongs to the calling stub.
+# Concurrency belongs to a calling stub -- but this workflow also runs for
+# this repository, where there is no stub to hold it, so the group is declared
+# for the self-run triggers below. github.workflow rather than
+# github.workflow_ref: the latter names the caller inside a called workflow,
+# which is how a shared workflow once cancelled its own caller.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
+# This repository is a dependency of every repository that calls it, so its own
+# supply-chain posture is worth measuring rather than assuming -- the pinning
+# and permissions here propagate outward. Analysis reads repository metadata,
+# not source, so unlike the compiler workflows it applies to a repository that
+# ships no C++ at all.
 on:
+  push:
+    branches: [ main ]
+  branch_protection_rule:
+  schedule:
+    - cron: '30 4 * * 1'
+  workflow_dispatch:
   workflow_call:
     inputs:
       publish_results:
