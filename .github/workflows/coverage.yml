@@ -1,0 +1,217 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Coverage
+
+# id-token for Codecov, which uploads over OIDC rather than with a token, so
+# there is no secret for a caller to pass. A called workflow cannot exceed its
+# caller's permissions, so the stub has to grant this too.
+permissions:
+  contents: read
+  id-token: write
+
+# No concurrency group; see gcc.yml. It belongs to the calling stub.
+
+on:
+  workflow_call:
+    inputs:
+      gcc_tier:
+        description: Rung supplying the compiler and its matching gcov.
+        type: string
+        required: false
+        default: stable
+      vcpkg_triplet:
+        description: Triplet for the test dependencies.
+        type: string
+        required: false
+        default: x64-linux
+      exclude:
+        description: >
+          Space-separated gcovr --exclude patterns. The default keeps the
+          report to the library's own headers.
+        type: string
+        required: false
+        default: "test/.* build/.*"
+      fail_under_line:
+        description: Line coverage below which the job fails.
+        type: number
+        required: false
+        default: 100
+      fail_under_branch:
+        description: Branch coverage below which the job fails.
+        type: number
+        required: false
+        default: 100
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  coverage:
+    name: gcovr
+    runs-on: ubuntu-24.04
+    env:
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+      VCPKG_CACHE_KEY: vcpkg-coverage-
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@dad80b5c444a928a6df9d3231df5a87c5893f62f
+
+      - name: Resolve the toolchain on this rung
+        id: toolchain
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@dad80b5c444a928a6df9d3231df5a87c5893f62f
+        with:
+          toolchain: gcc
+          tier: ${{ inputs.gcc_tier }}
+
+      - name: Require the rung to be filled
+        if: steps.toolchain.outputs.supported != 'true'
+        run: |
+          echo "::error::gcc has no ${{ inputs.gcc_tier }} rung"
+          exit 1
+
+      - name: Install GCC
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@dad80b5c444a928a6df9d3231df5a87c5893f62f
+        with:
+          version: ${{ steps.toolchain.outputs.version }}
+          trunk: ${{ steps.toolchain.outputs.trunk }}
+
+      - name: Install gcovr
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@dad80b5c444a928a6df9d3231df5a87c5893f62f
+
+      - name: Name the toolchain
+        env:
+          VERSION: ${{ steps.toolchain.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "TOOLCHAIN_CC=gcc-${VERSION}"    >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_CXX=g++-${VERSION}"   >> "$GITHUB_ENV"
+          # gcov has to match the compiler that wrote the notes.
+          echo "TOOLCHAIN_GCOV=gcov-${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Report toolchain versions
+        run: |
+          "$TOOLCHAIN_CC" --version
+          "$TOOLCHAIN_CXX" --version
+          "$TOOLCHAIN_GCOV" --version
+          gcovr --version
+          cmake --version
+
+      # vcpkg's own x-gha backend was removed, so cache its binary packages
+      # with actions/cache; the archives are named by ABI hash.
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      - name: Install the test dependencies
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@dad80b5c444a928a6df9d3231df5a87c5893f62f
+        with:
+          triplet: ${{ inputs.vcpkg_triplet }}
+
+      # Keyed on the archives' contents: an unconditional save would add an
+      # entry per run and evict this repo's other caches.
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER="$TOOLCHAIN_CC"
+          -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
+          -DCMAKE_CXX_FLAGS="--coverage -O0 -g"
+          -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
+          ${{ inputs.cmake_args }}
+
+      - name: Build
+        run: cmake --build build -v
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      # Full coverage of the library's own headers, less assert(...) and
+      # "= default;", and less the branches gcov synthesizes that no test can
+      # take.
+      #
+      # --merge-lines because the question this gate asks is whether a line of
+      # a template is ever run, not whether every emitted copy of it is. Without
+      # it gcov's records stay per instantiation and per translation unit, so a
+      # header line reads as uncovered in a unit that instantiates it and takes
+      # another route - which the same line, run in the unit next door, does not
+      # redeem. That is not a gap in the tests, and closing it means re-running
+      # identical code once per caller.
+      - name: Generate coverage report
+        env:
+          EXCLUDE: ${{ inputs.exclude }}
+        run: |
+          set -euo pipefail
+          excludes=()
+          for pattern in $EXCLUDE; do
+            excludes+=(--exclude "$pattern")
+          done
+          gcovr --root . \
+            --gcov-executable "$TOOLCHAIN_GCOV" \
+            --merge-lines \
+            "${excludes[@]}" \
+            --exclude-lines-by-pattern '^\s*assert\(' \
+            --exclude-lines-by-pattern '=\s*default;' \
+            --exclude-branches-by-pattern '^\s*assert\(' \
+            --exclude-branches-by-pattern '^\s*.*=\s*default;' \
+            --exclude-throw-branches \
+            --exclude-unreachable-branches \
+            --print-summary \
+            --fail-under-line ${{ inputs.fail_under_line }} \
+            --fail-under-branch ${{ inputs.fail_under_branch }} \
+            --txt coverage.txt \
+            --xml-pretty --xml coverage.xml
+
+      - name: Publish coverage summary
+        if: always()
+        run: |
+          {
+            echo '### Line coverage (gcovr)'
+            echo '```'
+            cat coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Without these the CLI's own gcov plugin blends an unfiltered second
+      # pass in alongside coverage.xml, undoing the exclusions above.
+      - name: Upload to Codecov
+        if: always()
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        with:
+          files: coverage.xml
+          plugins: noop
+          disable_search: true
+          use_oidc: true
+          # Fail loudly on a rejected upload rather than leaving a green job
+          # with no coverage; a later drop is what the daily run is for.
+          fail_ci_if_error: true
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-xml
+          path: coverage.xml
