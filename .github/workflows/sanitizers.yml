@@ -24,10 +24,18 @@ on:
         required: false
         default: stable,qualification,development
       reduce_on_pr:
-        description: Whether a pull request runs the floor and ceiling alone.
+        description: >
+          Whether a pull request runs the floor and ceiling alone. False here,
+          unlike the platform workflows: those reduce to keep a pull request's
+          check count down, and can, because a middle rung compiling says
+          little that the two ends do not. A sanitizer is not that. What it
+          reports depends on what its release instruments, which moves rung by
+          rung -- the qualification rung is not covered by testing either side
+          of it. Skipping it would leave exactly the gap this workflow found
+          twice in one morning at the ends.
         type: boolean
         required: false
-        default: true
+        default: false
       vcpkg_gcc_triplet:
         description: >
           Overlay triplet for the GCC legs. Like every other workflow here,
