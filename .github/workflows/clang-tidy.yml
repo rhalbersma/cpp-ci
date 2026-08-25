@@ -1,0 +1,248 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Clang-Tidy
+
+permissions:
+  contents: read
+
+# No concurrency group; see gcc.yml. It belongs to the calling stub.
+
+on:
+  workflow_call:
+    inputs:
+      tier:
+        description: >
+          Rung supplying clang-tidy. Its own input, like clang-format's: a
+          release gains, renames and retires checks, so it changes the verdict
+          on code nobody touched.
+        type: string
+        required: false
+        default: stable
+      gcc_tier:
+        description: Rung supplying the libstdc++ Clang compiles against.
+        type: string
+        required: false
+        default: stable
+      vcpkg_triplet:
+        description: Triplet for the dependencies the compile database needs.
+        type: string
+        required: false
+        default: x64-linux
+      header_dir:
+        description: Public headers, each also checked as a primary input.
+        type: string
+        required: false
+        default: include
+      header_exclude:
+        description: find -path pattern for headers to skip, or empty for none.
+        type: string
+        required: false
+        default: ""
+      self_sufficiency_regex:
+        description: run-clang-tidy pattern for the generated per-header units.
+        type: string
+        required: false
+        default: ""
+      sources_regex:
+        description: run-clang-tidy pattern for the test sources.
+        type: string
+        required: false
+        default: ""
+      adapted_dirs:
+        description: >
+          Space-separated directories of optional third-party libraries that
+          some headers adapt, added with -isystem when present. Inert for a
+          repository that has none.
+        type: string
+        required: false
+        default: ""
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  tidy:
+    name: clang-tidy
+    runs-on: ubuntu-24.04
+    env:
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@d58d37d45245920806eb2ee5a2b21dc38f1884e2
+
+      - name: Resolve the toolchain on this rung
+        id: toolchain
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@d58d37d45245920806eb2ee5a2b21dc38f1884e2
+        with:
+          toolchain: clang
+          tier: ${{ inputs.tier }}
+
+      - name: Require the rung to be filled
+        if: steps.toolchain.outputs.supported != 'true'
+        run: |
+          echo "::error::clang has no ${{ inputs.tier }} rung"
+          exit 1
+
+      - name: Resolve the GCC supplying libstdc++
+        id: libstdcxx
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@d58d37d45245920806eb2ee5a2b21dc38f1884e2
+        with:
+          toolchain: gcc
+          tier: ${{ inputs.gcc_tier }}
+
+      # A known-good libstdc++ for the standard library Clang compiles
+      # against; the binaries are not wanted, only the headers.
+      - name: Install the libstdc++
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@d58d37d45245920806eb2ee5a2b21dc38f1884e2
+        with:
+          version: ${{ steps.libstdcxx.outputs.version }}
+          trunk: ${{ steps.libstdcxx.outputs.trunk }}
+          symlink_binaries: "false"
+
+      - name: Install Clang and clang-tidy
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@d58d37d45245920806eb2ee5a2b21dc38f1884e2
+        with:
+          version: ${{ steps.toolchain.outputs.version }}
+          llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
+          tidy: "true"
+
+      - name: Name the toolchain and its cache
+        env:
+          VERSION: ${{ steps.toolchain.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "TOOLCHAIN_CC=clang-${VERSION}"    >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_CXX=clang++-${VERSION}" >> "$GITHUB_ENV"
+          echo "VCPKG_CACHE_KEY=vcpkg-clang-tidy-" >> "$GITHUB_ENV"
+
+      # vcpkg's own x-gha backend was removed, so cache its binary packages
+      # with actions/cache; the archives are named by ABI hash.
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      # Only so the test tree configures, and with it the compile database
+      # below; clang-tidy itself never links anything.
+      - name: Install the test dependencies
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@d58d37d45245920806eb2ee5a2b21dc38f1884e2
+        with:
+          triplet: ${{ inputs.vcpkg_triplet }}
+
+      # Keyed on the archives' contents: an unconditional save would add an
+      # entry per run and evict this repo's other caches.
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      # Debug rather than unset, so NDEBUG stays undefined on purpose:
+      # -DNDEBUG rewrites every assert before the AST, which these checks read.
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER="$TOOLCHAIN_CC"
+          -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
+          ${{ inputs.cmake_args }}
+
+      # Read from the compile database rather than stated here. The header
+      # pass below drives clang-tidy outside that database and so cannot
+      # inherit the dialect; taking it from the build is the one way the two
+      # cannot disagree.
+      - name: Read the dialect out of the compile database
+        run: |
+          set -euo pipefail
+          std=$(jq -r '.[0].command // .[0].arguments | if type == "array" then join(" ") else . end' \
+            build/compile_commands.json | grep -o -- '-std=[^ ]*' | head -1)
+          if [ -z "$std" ]; then
+            echo "::error::no -std= in build/compile_commands.json"
+            exit 1
+          fi
+          echo "Dialect from the build: $std"
+          echo "CXX_STD=$std" >> "$GITHUB_ENV"
+
+      # The public headers, through the generated self-sufficiency units.
+      # "shell: bash" for the -o pipefail, without which tee's status wins.
+      - name: Run clang-tidy over the public headers
+        if: inputs.self_sufficiency_regex != ''
+        shell: bash
+        env:
+          VERSION: ${{ steps.toolchain.outputs.version }}
+          PATTERN: ${{ inputs.self_sufficiency_regex }}
+        run: |
+          "run-clang-tidy-${VERSION}" -quiet -p build "$PATTERN" 2>&1 | tee clang-tidy-report.txt
+
+      # Each header as the primary input too, so misc-include-cleaner can tell
+      # a direct include from a transitive one. Aggregates carry IWYU pragmas.
+      - name: Check direct header dependencies
+        shell: bash
+        env:
+          VERSION: ${{ steps.toolchain.outputs.version }}
+          HEADER_DIR: ${{ inputs.header_dir }}
+          HEADER_EXCLUDE: ${{ inputs.header_exclude }}
+          ADAPTED_DIRS: ${{ inputs.adapted_dirs }}
+        run: |
+          adapted=()
+          for dir in $ADAPTED_DIRS; do
+            if [ -d "$dir" ]; then
+              adapted+=(-isystem "$dir")
+            fi
+          done
+          exclude=()
+          if [ -n "$HEADER_EXCLUDE" ]; then
+            exclude=(! -path "$HEADER_EXCLUDE")
+          fi
+          mapfile -d '' headers < <(
+            find "$HEADER_DIR" -type f -name '*.hpp' "${exclude[@]}" -print0
+          )
+          for header in "${headers[@]}"; do
+            "clang-tidy-${VERSION}" "$header" -- \
+              -x c++-header "$CXX_STD" -I"$HEADER_DIR" "${adapted[@]}"
+          done 2>&1 | tee -a clang-tidy-report.txt
+
+      # A separate pass so a finding names the tree whose rulebook it came from.
+      - name: Run clang-tidy over the test sources
+        if: inputs.sources_regex != ''
+        shell: bash
+        env:
+          VERSION: ${{ steps.toolchain.outputs.version }}
+          PATTERN: ${{ inputs.sources_regex }}
+        run: |
+          "run-clang-tidy-${VERSION}" -quiet -p build "$PATTERN" 2>&1 | tee -a clang-tidy-report.txt
+
+      - name: Publish clang-tidy summary
+        if: always()
+        run: |
+          {
+            echo '### clang-tidy findings'
+            echo '```'
+            grep -E ': (error|warning):' clang-tidy-report.txt || echo 'No findings.'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload clang-tidy report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: clang-tidy-report
+          path: clang-tidy-report.txt
