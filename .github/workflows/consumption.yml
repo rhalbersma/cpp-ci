@@ -43,6 +43,30 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Each consume step below is guarded on its own CMakeLists existing, so
+      # a repository documenting two of the three models still passes. Nothing
+      # checked that it documented any: a caller whose consumer_dir held none
+      # of them skipped all three and reported success having consumed
+      # nothing. Checked here, before a compiler is installed, so the caller
+      # is told what is missing rather than shown a green tick for it.
+      - name: Require at least one consumer model
+        env:
+          CONSUMER_DIR: ${{ inputs.consumer_dir }}
+        run: |
+          set -euo pipefail
+          found=0
+          for model in find_package add_subdirectory fetch_content; do
+            if [ -f "${CONSUMER_DIR}/${model}/CMakeLists.txt" ]; then
+              echo "found ${model}"
+              found=$((found + 1))
+            fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no consumer model under '${CONSUMER_DIR}': expected at least one of find_package/, add_subdirectory/ or fetch_content/ with a CMakeLists.txt"
+            exit 1
+          fi
+          echo "${found} of 3 models present"
+
       # This repository's own actions by owner/repo@sha, not by ./ path: a
       # relative reference resolves against the caller's workspace, which
       # holds the caller's checkout and none of this.
