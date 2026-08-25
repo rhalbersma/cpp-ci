@@ -68,10 +68,16 @@ jobs:
 
       # This repository lints itself with the workflow it hands to others, so
       # a change that would break a caller breaks this repository's own run.
-      # Only meaningful for this repository's own history, so it is not
-      # offered to callers: it reads commits, not the checkout.
+      # The pin check is this repository's alone -- it reads commits in this
+      # history, and the script lives here -- so it is guarded by name.
+      #
+      # Not by event: github.event_name inside a called workflow is the
+      # caller's event, never "workflow_call", so the guard that named it
+      # matched every caller and sent them looking for a script they do not
+      # have. github.repository is the caller's too, which is exactly what
+      # makes it the right test here.
       - name: Check this repository's own pins
-        if: github.event_name != 'workflow_call'
+        if: github.repository == 'rhalbersma/cpp-ci'
         run: |
           pip install --quiet pyyaml
           python3 .github/scripts/check_internal_pins.py

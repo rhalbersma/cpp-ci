@@ -8,9 +8,9 @@ name: Consumption
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow_ref }}-${{ github.ref }}
-  cancel-in-progress: true
+# No concurrency group; see gcc.yml. It belongs to the calling stub. This file
+# kept one after the others lost theirs, and only avoided cancelling its
+# callers because none of them happened to key a group the same way.
 
 on:
   workflow_call:
