@@ -31,6 +31,7 @@ def at(sha: str, path: str) -> bytes | None:
 
 def main() -> int:
     failures = []
+    seen_pins: dict[str, set[str]] = {}
     for wf in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
         doc = yaml.safe_load(wf.read_text())
         for job in (doc.get("jobs") or {}).values():
@@ -48,6 +49,8 @@ def main() -> int:
                 # An input added in the same commit as its first caller is the
                 # same mistake one level down: the action resolves, and then
                 # ignores what it was handed.
+                seen_pins.setdefault(sha, set()).add(wf.name)
+
                 declared = set(yaml.safe_load(manifest).get("inputs") or {})
                 for given in (step.get("with") or {}):
                     if given not in declared:
@@ -69,6 +72,26 @@ def main() -> int:
                         failures.append(
                             f"{wf.name}: toolchains.json at {sha[:7]} has no '{family}'"
                         )
+
+    # Every internal pin must name the same commit. Each one on its own can
+    # be perfectly valid -- the action exists there, its inputs are declared --
+    # while the set of them is still wrong, because a workflow pinned at an
+    # older commit runs an older copy of the action. That is not theoretical:
+    # a retry widened in install-gcc reached nothing for an hour, since all
+    # seven workflows calling it named commits from before the change, and
+    # three legs then failed on the very brownout it was written for.
+    #
+    # Pinning them together also keeps this repository honest about what it
+    # sells: one place to change a thing, not fourteen commits' worth of drift
+    # inside the repository that exists to end drift elsewhere.
+    if len(seen_pins) > 1:
+        listed = ", ".join(
+            f"{sha[:7]} ({', '.join(sorted(names))})"
+            for sha, names in sorted(seen_pins.items())
+        )
+        failures.append(
+            f"internal pins name {len(seen_pins)} different commits: {listed}"
+        )
 
     for f in failures:
         print(f"::error::{f}")

@@ -46,11 +46,11 @@ jobs:
       # This repository's own actions by owner/repo@sha, not by ./ path: a
       # relative reference resolves against the caller's workspace, which
       # holds the caller's checkout and none of this.
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f1408f83d1804d1ff44aa27246994dfff5721adb
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@0061e0a7dcc5197821232597043379f5a09cbff9
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f1408f83d1804d1ff44aa27246994dfff5721adb
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@0061e0a7dcc5197821232597043379f5a09cbff9
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -62,7 +62,7 @@ jobs:
           exit 1
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@f1408f83d1804d1ff44aa27246994dfff5721adb
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@0061e0a7dcc5197821232597043379f5a09cbff9
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
