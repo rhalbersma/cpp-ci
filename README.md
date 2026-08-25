@@ -105,9 +105,19 @@ Four Linux legs, each building and running the caller's test suite in Debug:
 | Leg | Compiler | Flags |
 | :-- | :------- | :---- |
 | ASan + LSan | GCC | `-fsanitize=address -fno-omit-frame-pointer` |
+| ASan + LSan | Clang, libc++ | the same, plus `-stdlib=libc++` |
 | UBSan | GCC | `-fsanitize=undefined -fno-sanitize-recover=undefined` |
 | UBSan | Clang | `-fsanitize=undefined -fno-sanitize-recover=undefined` |
 | Implicit conversion | Clang | `-fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion` |
+
+ASan runs against both standard libraries. Its detection is a shared runtime,
+so a second compiler alone would re-run one check -- but the container-overflow
+annotations are not shared: libc++ instruments `vector`, `string` and `deque`,
+while libstdc++ annotates `vector` alone and only under
+`_GLIBCXX_SANITIZE_VECTOR`. An overflow inside a `std::string` is invisible to
+the first leg and visible to the second. That leg rebuilds Boost.Test against
+libc++ through an overlay triplet, since a dependency built against the other
+standard library would not link with it in any case.
 
 Leak detection is **on**: `ASAN_OPTIONS=detect_leaks=1` is set explicitly, so a
 repository that allocates gets the check rather than inheriting a suppression

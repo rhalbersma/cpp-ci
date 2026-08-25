@@ -43,6 +43,15 @@ on:
         type: string
         required: false
         default: x64-linux
+      vcpkg_libcxx_triplet:
+        description: >
+          Overlay triplet for the libc++ leg. Boost.Test has to be built
+          against libc++ as well: ASan's container-overflow checking reads
+          annotations the standard library emits, and a Boost.Test built
+          against libstdc++ would not link with it in any case.
+        type: string
+        required: false
+        default: x64-linux-libcxx
 
 jobs:
   build:
@@ -60,6 +69,21 @@ jobs:
             compiler: GCC
             family: gcc
             flags: -fsanitize=address -fno-omit-frame-pointer -g
+            options: ASAN_OPTIONS=detect_leaks=1
+
+          # The same sanitizer against the other standard library, which is
+          # where the difference lives. ASan's detection is a shared runtime,
+          # so a second compiler would re-run one check; the container-overflow
+          # annotations are not shared. libc++ instruments vector, string and
+          # deque; libstdc++ annotates vector alone, and only under
+          # _GLIBCXX_SANITIZE_VECTOR. An overflow inside a std::string is
+          # therefore invisible to the leg above and visible to this one.
+          - id: asan-libcxx
+            name: ASan + LSan
+            compiler: Clang libc++
+            family: clang
+            libcxx: true
+            flags: -fsanitize=address -fno-omit-frame-pointer -g -stdlib=libc++
             options: ASAN_OPTIONS=detect_leaks=1
 
           # UBSan twice over: the two implementations do not check the same
@@ -100,11 +124,11 @@ jobs:
       # relative reference resolves against the caller's workspace, which
       # holds the caller's checkout and none of this. The pin keeps a caller's
       # pinned workflow from silently pulling actions off a moving main.
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f1408f83d1804d1ff44aa27246994dfff5721adb
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@75cbc318c1a50628d292011bf69a88a0406904cb
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f1408f83d1804d1ff44aa27246994dfff5721adb
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@75cbc318c1a50628d292011bf69a88a0406904cb
         with:
           toolchain: ${{ matrix.family }}
           tier: ${{ matrix.family == 'gcc' && inputs.gcc_tier || inputs.clang_tier }}
@@ -121,7 +145,8 @@ jobs:
       # On the Clang legs this is the paired libstdc++ rather than a compiler,
       # the div_result formatter needing its std::formatter<tuple>.
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@f1408f83d1804d1ff44aa27246994dfff5721adb
+        if: matrix.libcxx != true
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@75cbc318c1a50628d292011bf69a88a0406904cb
         with:
           version: ${{ matrix.family == 'gcc' && steps.toolchain.outputs.version || steps.toolchain.outputs.gcc_version }}
           trunk: ${{ matrix.family == 'gcc' && steps.toolchain.outputs.trunk || steps.toolchain.outputs.gcc_trunk }}
@@ -129,10 +154,19 @@ jobs:
 
       - name: Install Clang
         if: matrix.family == 'clang'
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@f1408f83d1804d1ff44aa27246994dfff5721adb
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@75cbc318c1a50628d292011bf69a88a0406904cb
         with:
           version: ${{ steps.toolchain.outputs.version }}
           llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
+          libcxx: ${{ matrix.libcxx == true }}
+
+      # Only the libc++ leg needs these: its Boost.Test is rebuilt against
+      # libc++ through the chainloaded triplet, and the other legs take the
+      # runner's default standard library.
+      - name: Locate the overlay triplets
+        if: matrix.libcxx == true
+        id: overlay
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@75cbc318c1a50628d292011bf69a88a0406904cb
 
       # Named once here rather than in every expression below, and the cache
       # key with them: it has to name the rung, or a tier change would restore
@@ -155,6 +189,11 @@ jobs:
             echo "TOOLCHAIN_CXX=clang++-${VERSION}" >> "$GITHUB_ENV"
           fi
           echo "VCPKG_CACHE_KEY=vcpkg-sanitizers-${LEG}-${LABEL}-" >> "$GITHUB_ENV"
+          # Read again by the vcpkg CMake integration, so the libc++ leg's
+          # compiler selection has to outlive the install step.
+          if [ "$FAMILY" = "clang" ]; then
+            echo "VCPKG_CLANG_VERSION=${VERSION}" >> "$GITHUB_ENV"
+          fi
           # Defined for every leg, so Configure below can name it unconditionally.
           echo "IGNORELIST_FLAG=" >> "$GITHUB_ENV"
 
@@ -194,9 +233,10 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@222ac51c98bb8f0473b68a523a92340620129d47
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@75cbc318c1a50628d292011bf69a88a0406904cb
         with:
-          triplet: ${{ inputs.vcpkg_triplet }}
+          triplet: ${{ matrix.libcxx == true && inputs.vcpkg_libcxx_triplet || inputs.vcpkg_triplet }}
+          overlay_triplets: ${{ matrix.libcxx == true && steps.overlay.outputs.triplets || '' }}
 
       # Keyed on the archives' contents: an unconditional save would add an
       # entry per run and evict this repo's other caches.
@@ -224,7 +264,8 @@ jobs:
           -DCMAKE_CXX_FLAGS="$SANITIZER_FLAGS $IGNORELIST_FLAG ${{ inputs.cxx_flags }}"
           -DCMAKE_EXE_LINKER_FLAGS="$SANITIZER_FLAGS"
           -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.libcxx == true && inputs.vcpkg_libcxx_triplet || inputs.vcpkg_triplet }}
+          ${{ matrix.libcxx == true && format('-DVCPKG_OVERLAY_TRIPLETS={0}', steps.overlay.outputs.triplets) || '' }}
           ${{ inputs.cmake_args }}
 
       - name: Build
