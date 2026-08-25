@@ -178,7 +178,14 @@ jobs:
   all:
     name: all
     needs: build
-    if: always()
+    # Not always(): that runs on cancellation too, so a push superseding an
+    # in-flight run left this red on the head it had just replaced -- and
+    # started a runner to do it, after the run was already cancelled. Three
+    # gates reported failure that way within a minute of being added, on
+    # workflows whose legs had passed every step.
+    #
+    # !cancelled() still runs when a leg fails, which is the whole job.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: Fail unless every leg succeeded
