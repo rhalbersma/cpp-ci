@@ -41,11 +41,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@a5d0e5f923e523202505a3f6fc4c7b6d1d66bb8a
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@2289b8c616bc1337b18d3096076c240195c0ea7c
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@a5d0e5f923e523202505a3f6fc4c7b6d1d66bb8a
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@2289b8c616bc1337b18d3096076c240195c0ea7c
         with:
           toolchain: clang
           tier: ${{ inputs.tier }}
@@ -56,11 +56,12 @@ jobs:
           echo "::error::clang has no ${{ inputs.tier }} rung"
           exit 1
 
-      - name: Install Clang
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@a5d0e5f923e523202505a3f6fc4c7b6d1d66bb8a
+      - name: Install clang-format
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@2289b8c616bc1337b18d3096076c240195c0ea7c
         with:
           version: ${{ steps.toolchain.outputs.version }}
           llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
+          format: "true"
 
       # --dry-run --Werror turns a reformatting diff into a failure rather
       # than rewriting files; the diff shows up in this job's log.
