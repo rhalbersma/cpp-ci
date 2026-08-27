@@ -5,15 +5,13 @@
 
 name: Scorecard
 
-# id-token to publish to the OpenSSF dataset the README badge reads,
-# security-events to file the findings, actions: read for the workflow
-# analysis. A called workflow cannot exceed its caller's permissions, so the
-# stub has to grant all of these too.
+# Read-only, and deliberately: the webapp that ingests published results
+# verifies this file rather than the caller's stub, because the OIDC
+# certificate names the workflow that ran the job, which for a reusable
+# workflow is this one. Its verifier rejects a workflow-level scope set to
+# write, so the grants belong on the job below.
 permissions:
   contents: read
-  security-events: write
-  id-token: write
-  actions: read
 
 # Concurrency belongs to a calling stub -- but this workflow also runs for
 # this repository, where there is no stub to hold it, so the group is declared
@@ -50,6 +48,16 @@ jobs:
   analysis:
     name: Scorecard analysis
     runs-on: ubuntu-24.04
+
+    # id-token to publish to the OpenSSF dataset the README badge reads,
+    # security-events to file the findings, actions: read for the workflow
+    # analysis. A called workflow cannot exceed its caller's permissions, so a
+    # stub has to grant all of these too, on its own calling job.
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
+      actions: read
 
     steps:
       # No credentials on disk: the analysis reads the repository's public
