@@ -71,7 +71,13 @@ jobs:
         with:
           results_file: results.sarif
           results_format: sarif
-          publish_results: ${{ inputs.publish_results }}
+          # The inputs context is empty on this workflow's own push, schedule
+          # and dispatch runs, so the input's default never reaches them and
+          # a bare reference publishes nothing. Comparing the formatted value
+          # rather than the value itself is what distinguishes "absent" from
+          # "false": GitHub casts both null and false to 0, so == null is true
+          # for a caller that passed false, and != false is false when absent.
+          publish_results: ${{ format('{0}', inputs.publish_results) != 'false' }}
 
       # Publishing feeds the README badge's dataset; the upload below also
       # surfaces the findings in the repository's Security tab.
