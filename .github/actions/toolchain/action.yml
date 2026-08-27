@@ -35,13 +35,18 @@ inputs:
   reduce_on_pr:
     description: >
       Whether a pull_request event runs a reduced matrix: the first and last
-      requested rungs -- the released floor and the moving ceiling, where
-      breakage actually appears -- in Debug alone. Pushes, schedules and
-      dispatches always run the full set, so main and the badges keep their
-      complete coverage while four repositories stop queueing behind each
-      other on every review round.
+      requested rungs -- the released floor and the moving ceiling -- in Debug
+      alone. Pushes, schedules and dispatches always run the full set.
+
+      False by default. The reduction was meant to keep four repositories from
+      queueing behind each other on every review round, and it does, but it
+      pays for that with the one event the gate exists to guard: a caller's
+      required check is the "all" gate, which covers only the legs that ran,
+      so a reduced pull request reports success having never compiled the
+      middle rung. sanitizers.yml already refused the trade for its own
+      reason; this is the same trade.
     required: false
-    default: "true"
+    default: "false"
 
 outputs:
   # Not every family fills every rung: Apple publishes no Clang trunk, so
@@ -153,9 +158,11 @@ runs:
           exit 1
         fi
 
-        # The floor and the ceiling on a pull request. Everything between them
-        # has a released compiler on either side, so a break that reaches only
-        # the middle rung is one a push will still catch within the hour.
+        # The floor and the ceiling on a pull request, when a caller asks for
+        # that. It is no longer the default: a push does still catch a break
+        # that reaches only the middle rung, but it catches it after the merge
+        # that introduced it, having reported the pull request green through
+        # the very gate the caller marks required.
         if [ "$EVENT_NAME" = "pull_request" ] && [ "$REDUCE_ON_PR" = "true" ]; then
           if [ ${#requested[@]} -gt 2 ]; then
             requested=("${requested[0]}" "${requested[${#requested[@]}-1]}")
