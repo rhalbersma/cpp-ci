@@ -85,12 +85,20 @@ compiler family, since its legs are split between them:
 | [`consumption.yml`](.github/workflows/consumption.yml) | `find_package`, `add_subdirectory`, `FetchContent` |
 
 The platform workflows share a shape: a first job resolves the requested rungs
-to a strategy matrix, a second builds them. On a **pull request** they run the
-floor and the ceiling in Debug alone -- the oldest compiler the code claims and
-the one that changes weekly, where breakage actually appears. The middle rung
+to a strategy matrix, a second builds them, and a third gate reports one check
+name that does not move as the ladder does.
+
+Every rung runs on every event, **pull requests included**. `reduce_on_pr: true`
+opts a caller into running the floor and the ceiling in Debug alone on a pull
+request -- the oldest compiler the code claims and the one that changes weekly.
+That reduction used to be the default, on the reasoning that the middle rung
 has a released compiler either side of it and a push covers it within the hour.
-Pushes, schedules and dispatches always run the full set. Pass
-`reduce_on_pr: false` to opt out.
+The hour is the problem: the gate a caller marks as its required check reports
+on the legs that ran, so a reduced pull request goes green having never
+compiled the middle rung, and a break there merges before the push that finds
+it. `sanitizers.yml` had already refused the same trade for its own reason --
+what a sanitizer reports depends on the release doing the instrumenting -- and
+the argument generalises.
 
 **Concurrency belongs to the caller.** None of these declare a concurrency
 group: inside a called workflow `github.workflow_ref` names the *calling*
@@ -101,8 +109,7 @@ canary; these do not.
 ### `sanitizers.yml`
 
 Five Linux legs, each building and running the caller's test suite in Debug,
-and each run on every rung its compiler fills -- fifteen jobs on a push, ten on
-a pull request. A sanitizer's instrumentation is no more fixed across releases
+and each run on every rung its compiler fills -- fifteen jobs, on every event. A sanitizer's instrumentation is no more fixed across releases
 than across compilers: GCC's UBSan does not diagnose the signed overflow
 Clang's does on a `_BitInt(2)`, and a bit-precise library has no reason to
 assume one GCC agrees with the next about that either.

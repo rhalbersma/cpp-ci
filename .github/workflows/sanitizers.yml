@@ -25,14 +25,15 @@ on:
         default: stable,qualification,development
       reduce_on_pr:
         description: >
-          Whether a pull request runs the floor and ceiling alone. False here,
-          unlike the platform workflows: those reduce to keep a pull request's
-          check count down, and can, because a middle rung compiling says
-          little that the two ends do not. A sanitizer is not that. What it
-          reports depends on what its release instruments, which moves rung by
-          rung -- the qualification rung is not covered by testing either side
-          of it. Skipping it would leave exactly the gap this workflow found
-          twice in one morning at the ends.
+          Whether a pull request runs the floor and ceiling alone. False, as
+          it is everywhere here now -- this workflow simply got there first,
+          and for a second reason of its own. The general one is that the
+          gate a caller marks required covers only the legs that ran. The
+          particular one is that what a sanitizer reports depends on what its
+          release instruments, which moves rung by rung, so the qualification
+          rung is not covered by testing either side of it: skipping it would
+          leave exactly the gap this workflow found twice in one morning at
+          the ends.
         type: boolean
         required: false
         default: false

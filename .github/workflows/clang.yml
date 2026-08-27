@@ -24,10 +24,17 @@ on:
         required: false
         default: Release,Debug
       reduce_on_pr:
-        description: Whether a pull request runs the floor and ceiling in Debug alone.
+        description: >
+          Whether a pull request runs the floor and ceiling in Debug alone.
+          False by default, as in sanitizers.yml. A caller makes the "all"
+          gate its required check, and that gate covers only the legs that
+          ran: reduced, it reports success on a pull request that never
+          compiled the middle rung, so a break there merges green and reddens
+          main on the push behind it. Pass true where something else genuinely
+          covers that rung.
         type: boolean
         required: false
-        default: true
+        default: false
       vcpkg_triplet:
         description: Overlay triplet building the dependencies with the Clang under test.
         type: string
