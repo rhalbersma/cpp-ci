@@ -113,7 +113,15 @@ jobs:
         env:
           PREFIX: ${{ inputs.cache_prefix }}
           LABEL: ${{ matrix.label }}
-        run: echo "VCPKG_CACHE_KEY=vcpkg-${PREFIX}-${LABEL}-" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          # A newline here would append a second line to GITHUB_ENV, which is
+          # a variable this workflow never meant to set. Refused rather than
+          # escaped: no legitimate cache prefix contains one.
+          case "$PREFIX" in *$'\n'*)
+            echo "::error::cache_prefix must be a single line"; exit 1 ;;
+          esac
+          echo "VCPKG_CACHE_KEY=vcpkg-${PREFIX}-${LABEL}-" >> "$GITHUB_ENV"
 
       - name: Install the MSVC Preview toolset
         if: matrix.preview_channel == 'true'
@@ -176,6 +184,10 @@ jobs:
           WERROR: ${{ inputs.warnings_as_errors }}
         run: |
           set -euo pipefail
+          # As above: a newline in analyze_args would set a second variable.
+          case "$EXTRA" in *$'\n'*)
+            echo "::error::analyze_args must be a single line"; exit 1 ;;
+          esac
           flags="/analyze /analyze:external- /external:W0 /external:anglebrackets"
           if [ "$WERROR" = "true" ]; then
             flags="$flags /WX"
@@ -186,36 +198,56 @@ jobs:
           echo "Analysis flags: $flags"
           echo "ANALYZE_FLAGS=$flags" >> "$GITHUB_ENV"
 
+      # Every expression reaches the shell through env rather than being
+      # substituted into the script, so a value carrying a quote or a
+      # semicolon is an argument and not a command. read -ra for cmake_args
+      # for the reason coverage.yml gives: an unquoted expansion globs as
+      # well as splits.
       - name: Configure
         if: matrix.preview_channel != 'true'
         shell: bash
-        run: >
-          cmake -S . -B build
-          -G "${{ matrix.generator }}"
-          -DCMAKE_CXX_FLAGS="$ANALYZE_FLAGS"
-          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
-          ${{ inputs.cmake_args }}
+        env:
+          GENERATOR: ${{ matrix.generator }}
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+        run: |
+          set -euo pipefail
+          read -ra extra <<< "$EXTRA_CMAKE"
+          cmake -S . -B build \
+            -G "$GENERATOR" \
+            -DCMAKE_CXX_FLAGS="$ANALYZE_FLAGS" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            "${extra[@]}"
 
       - name: Configure (preview toolset)
         if: matrix.preview_channel == 'true'
         shell: bash
-        run: >
-          cmake -S . -B build
-          -G "${{ matrix.generator }}"
-          -T "${{ steps.preview.outputs.toolset }}"
-          -DCMAKE_CXX_FLAGS="$ANALYZE_FLAGS"
-          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
-          ${{ inputs.cmake_args }}
+        env:
+          GENERATOR: ${{ matrix.generator }}
+          TOOLSET: ${{ steps.preview.outputs.toolset }}
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+        run: |
+          set -euo pipefail
+          read -ra extra <<< "$EXTRA_CMAKE"
+          cmake -S . -B build \
+            -G "$GENERATOR" \
+            -T "$TOOLSET" \
+            -DCMAKE_CXX_FLAGS="$ANALYZE_FLAGS" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            "${extra[@]}"
 
       # The analysis is the compile, so this step is the check. "shell: bash"
       # for the -o pipefail, without which tee's status wins and a failing
       # build reports success.
       - name: Analyze
         shell: bash
+        env:
+          BUILD_TYPE: ${{ inputs.build_type }}
         run: |
-          cmake --build build --config ${{ inputs.build_type }} -v 2>&1 \
+          cmake --build build --config "$BUILD_TYPE" -v 2>&1 \
             | tee msvc-analyze-report.txt
 
       - name: Publish the analysis summary
