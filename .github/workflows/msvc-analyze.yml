@@ -251,9 +251,21 @@ jobs:
           # CXXFLAGS rather than the cache entry, for the reason the
           # non-preview Configure gives.
           export CXXFLAGS="$ANALYZE_FLAGS"
+          # version=, not the bare number. CMake's Visual Studio generator
+          # reads a bare -T argument as a platform toolset *name* -- v143 and
+          # the like -- so a version there is looked up as a name that does
+          # not exist, and MSBuild says so in those terms:
+          #
+          #   error MSB8020: The build tools for 14.52.36615 (Platform
+          #   Toolset = '14.52.36615') cannot be found.
+          #
+          # visual-studio.yml has always spelled it version=...,host=x64 and
+          # its preview legs configure; this one did not, and nothing noticed
+          # because msvc-analyze ran only the qualification rung, which takes
+          # the other Configure step entirely.
           cmake -S . -B build \
             -G "$GENERATOR" \
-            -T "$TOOLSET" \
+            -T "version=$TOOLSET,host=x64" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
             "${extra[@]}"
