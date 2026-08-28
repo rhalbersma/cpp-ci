@@ -12,11 +12,6 @@ permissions:
 # workflow's own push runs are short enough not to want one.
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
   workflow_call:
     inputs:
       paths:

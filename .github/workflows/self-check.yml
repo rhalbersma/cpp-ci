@@ -1,0 +1,80 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Self-Check
+
+permissions:
+  contents: read
+
+# A group here is unremarkable, unlike in the workflows this one calls: no
+# caller ever reaches this file, so github.workflow and github.ref name this
+# repository's own run and nothing has to be added to keep it distinct.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# What this repository runs against itself. Everything else here exists to be
+# called by xstd, tabula, bit_set and dctl; this is the one workflow that is
+# only ever about cpp-ci.
+#
+# Keeping it separate is what lets codeql.yml and actionlint.yml go back to
+# being workflow_call and nothing else. codeql.yml previously carried its own
+# push and pull_request triggers and told its two jobs apart by whether the
+# inputs context was empty, which meant a caller's C++ job appeared on this
+# repository's own pull requests as a permanent "skipped" - reported, never
+# run, and easy to misread as a check that had been turned off.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '30 5 * * 1'
+  workflow_dispatch:
+
+jobs:
+  # The same workflow the callers use, run against this repository. Its pin
+  # check is guarded on github.repository, which is cpp-ci here, so it fires.
+  actionlint:
+    uses: ./.github/workflows/actionlint.yml
+
+  # actions reads the workflows and composite actions; python reads
+  # check_internal_pins.py. Neither needs a compiler, so both run with
+  # build-mode: none and the analysis is the whole job.
+  codeql:
+    name: codeql
+    runs-on: ubuntu-24.04
+
+    # security-events to file the findings, actions to let the extractor read
+    # the workflows it is analyzing. Job level rather than workflow level, for
+    # the reason codeql.yml gives: Scorecard's Token-Permissions subtracts a
+    # point for a top-level security-events write and nothing for the same
+    # grant on a job.
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ actions, python ]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          category: "/language:${{ matrix.language }}"
