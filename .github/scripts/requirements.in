@@ -1,0 +1,11 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+# check_internal_pins.py's only Python dependency; it parses workflow and
+# action YAML with yaml.safe_load and needs nothing else. Compiled, with the
+# hashes of its whole transitive closure, into requirements.txt next door.
+# Both are bumped by Dependabot; regenerate by hand with the command that
+# file records.
+pyyaml==6.0.3
