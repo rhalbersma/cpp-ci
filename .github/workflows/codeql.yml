@@ -5,11 +5,8 @@
 
 name: CodeQL
 
-# security-events to file the findings. A called workflow cannot exceed its
-# caller's permissions, so the stub has to grant this too.
 permissions:
   contents: read
-  security-events: write
 
 # No concurrency group; see gcc.yml. It belongs to the calling stub.
 
@@ -48,6 +45,20 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-24.04
+
+    # security-events to file the findings. A called workflow cannot exceed its
+    # caller's permissions, so a stub has to grant this too, on its calling job.
+    #
+    # Deliberately here rather than at workflow level. Scorecard's
+    # Token-Permissions check subtracts a full point for a top-level
+    # security-events write and nothing for the same grant on a job, provided
+    # the workflow still declares a top-level block at all -- which the
+    # contents: read above does. Least privilege reads the same way: only this
+    # job files findings.
+    permissions:
+      contents: read
+      security-events: write
+
     env:
       VCPKG_BINARY_SOURCES: "clear;default,readwrite"
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
