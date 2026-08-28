@@ -5,8 +5,15 @@
 
 version: 2
 updates:
+  # directories, not directory: the singular form scans .github/workflows and a
+  # root action.yml, and misses the composite actions under .github/actions --
+  # two of which pin actions/cache. That they carry one commit under two
+  # different version comments, "# v6.1.0" and "# v6", is what a pin nothing
+  # bumps looks like.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: monthly
     # One PR per cycle. Not just for quiet: github/codeql-action's init and
@@ -17,9 +24,18 @@ updates:
         patterns:
           - "*"
 
-  # The coverage workflow's pinned gcovr, which lives beside the action that
-  # installs it so the calling repositories carry no copy to bump.
+  # Both hash-pinned requirements files: the coverage workflow's gcovr, which
+  # lives beside the action installing it so callers carry no copy to bump, and
+  # the pin checker's own PyYAML.
+  #
+  # Coverage is per directory. #11 added .github/scripts/requirements.txt saying
+  # Dependabot would watch it as it watches the gcovr pair. It would not have:
+  # that entry names install-gcovr and nothing else, so the new file was pinned
+  # by hash with nothing to raise the hash. A pin nothing bumps is a pin that
+  # rots into an unpatched dependency.
   - package-ecosystem: pip
-    directory: /.github/actions/install-gcovr
+    directories:
+      - /.github/actions/install-gcovr
+      - /.github/scripts
     schedule:
       interval: monthly
