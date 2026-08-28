@@ -8,9 +8,24 @@ name: CodeQL
 permissions:
   contents: read
 
-# No concurrency group; see gcc.yml. It belongs to the calling stub.
+# No concurrency group at workflow level; see gcc.yml. It belongs to the calling
+# stub, and a group declared here would evaluate to the caller's own string --
+# github.workflow and github.ref both name the CALLER inside a called workflow.
+# The self-analysis job below carries its own group instead, so nothing a caller
+# reaches is affected.
 
+# This repository ships no C++ at all: 14 workflows, 9 composite actions and one
+# Python script. What it does ship is the thing CodeQL's actions pack exists to
+# read, and it is a dependency of four repositories, so a script injection or an
+# untrusted checkout here propagates outward. codeql.yml was workflow_call only,
+# which meant it analysed every repository that called it and never the one it
+# lives in -- the same gap scorecard.yml closed for itself.
 on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '30 5 * * 1'
+  workflow_dispatch:
   workflow_call:
     inputs:
       gcc_tier:
@@ -45,6 +60,20 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-24.04
+
+    # Callers only. There is no C++ here to extract, so this job would fail on
+    # the push, schedule and dispatch runs added above.
+    #
+    # The test is whether this run has inputs at all. github.event_name cannot
+    # do it: inside a called workflow it is the CALLER's event, never
+    # "workflow_call", so naming the event would skip this for every caller.
+    # github.repository is the caller's too, so a name comparison would work
+    # here but break in a fork, where a push would pass the test and then fail
+    # for want of any C++. The inputs context is empty on push, schedule and
+    # workflow_dispatch and carries this workflow's defaults on workflow_call,
+    # which separates the two roles exactly and in any repository.
+    if: format('{0}', inputs.languages) != ''
+
 
     # security-events to file the findings. A called workflow cannot exceed its
     # caller's permissions, so a stub has to grant this too, on its calling job.
@@ -150,3 +179,57 @@ jobs:
         uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           category: "/language:${{ inputs.languages }}"
+
+  # This repository analysing itself. Separate from the job above rather than
+  # folded into it: that one is a C++ pipeline - resolve a rung, install GCC,
+  # install vcpkg dependencies, configure, build - and none of it applies to a
+  # build-mode: none extraction. Gating those seven steps on a language would
+  # also have to survive the empty-inputs trap on every one of them, on the
+  # workflow all four callers reach. This shares only checkout and the CodeQL
+  # actions, and no caller reaches it.
+  analyze-self:
+    name: Analyze this repository
+    runs-on: ubuntu-24.04
+
+    # The other half of the test above, so exactly one of the two jobs runs.
+    # A fork gets its own analysis rather than nothing.
+    if: format('{0}', inputs.languages) == ''
+
+    # Job level, so a caller's run never reaches it. github.workflow and
+    # github.ref would name the caller inside a called workflow; the trailing
+    # literal keeps this group distinct even so.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-cpp-ci-codeql-self
+      cancel-in-progress: true
+
+    # security-events to file the findings, actions to let the extractor read
+    # the workflows it is analysing. Job level for the same reason as above.
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # actions reads the workflows and composite actions; python reads
+        # check_internal_pins.py. Neither needs a compiler, so both run with
+        # build-mode: none and the analysis is the whole job.
+        language: [ actions, python ]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          category: "/language:${{ matrix.language }}"
