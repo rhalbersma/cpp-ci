@@ -80,17 +80,20 @@ jobs:
           category: "/language:${{ matrix.language }}"
 
   # One check name that does not move, for branch protection to require -- the
-  # same role, and the same name, the "all" job has in gcc.yml and its
-  # siblings. There the caller's job supplies the prefix and the check reads
-  # "gcc / all"; here nothing calls this workflow, so the prefix the interface
-  # shows is the workflow's own display name and it reads "Self-Check / all".
-  # Branch protection matches the check name alone, which is "all".
+  # same role the "all" job has in gcc.yml and its siblings.
   #
   # Requiring this instead of the legs means a leg added here later is covered
   # without touching the repository's settings, which is the point: the failure
   # this guards against is a check that stops running and nobody noticing.
   all:
-    name: all
+    # Spelled with the slash on purpose. Everywhere else in this family the
+    # gate reads "gcc / all" or "msvc / all", because a caller's job supplies
+    # the first half and cpp-ci's job the second. Nothing calls this workflow,
+    # so there is no first half to inherit -- and a check called plain "all" in
+    # a ruleset list, next to xstd's "gcc / all" and "msvc / all", says nothing
+    # about what it gates. This is a display name chosen to match them, not a
+    # reusable-workflow path.
+    name: self-check / all
     needs: [ actionlint, codeql ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
