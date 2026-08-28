@@ -254,11 +254,22 @@ jobs:
         run: |
           set -euo pipefail
 
+          # A triplet names a directory and a CMake variable, and reaches
+          # GITHUB_ENV from an input this workflow does not own. Reduced to
+          # the characters a triplet is made of and then required to be
+          # unchanged: mangling a wrong value into a working one would put
+          # the ports somewhere nobody asked for.
+          triplet=$(printf '%s' "$TRIPLET" | tr -cd '[:alnum:]._-')
+          if [ "$triplet" != "$TRIPLET" ]; then
+            echo "::error::vcpkg_triplet must match [A-Za-z0-9._-]"
+            exit 1
+          fi
+
           # The library's side: vcpkg's toolchain file, in manifest mode.
           library=""
           if [ "$USE_VCPKG" = true ]; then
             library="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-            library="$library -DVCPKG_TARGET_TRIPLET=$TRIPLET"
+            library="$library -DVCPKG_TARGET_TRIPLET=$triplet"
             library="$library -DVCPKG_OVERLAY_TRIPLETS=$OVERLAY_TRIPLETS"
           fi
           echo "LIBRARY_VCPKG_ARGS=$library" >> "$GITHUB_ENV"
@@ -274,7 +285,7 @@ jobs:
             common="$deps"
           fi
           if [ "$USE_VCPKG" = true ]; then
-            manifest="$GITHUB_WORKSPACE/vcpkg_installed/$TRIPLET"
+            manifest="$GITHUB_WORKSPACE/vcpkg_installed/$triplet"
             if [ ! -d "$manifest" ]; then
               echo "::error::vcpkg was requested but $manifest does not exist: the manifest install wrote somewhere else"
               exit 1

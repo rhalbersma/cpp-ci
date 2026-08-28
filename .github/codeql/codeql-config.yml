@@ -1,0 +1,41 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: cpp-ci self-analysis
+
+queries:
+  - uses: security-extended
+
+query-filters:
+  # actions/envvar-injection/medium fires on thirteen steps here, and reports
+  # matrix.label, matrix.version, matrix.os, matrix.cxxflags and
+  # steps.toolchain.outputs.version as the untrusted sources. Those are not
+  # caller text. They are read out of .github/actions/toolchain/toolchains.json
+  # by the toolchain action, which accepts a tier and nothing else: the tier is
+  # checked against that file's own keys and an unknown one is dropped or fails
+  # the job. A caller names a rung; it never supplies a version, a label or a
+  # runner image.
+  #
+  # The query cannot see that. These are reusable workflows, so it resolves no
+  # trigger event for them, treats the matrix as being of unknown provenance,
+  # and reports the whole class. Nothing here distinguishes the safe shape from
+  # an unsafe one, so there is nothing to fix in the workflows and no reason to
+  # thread the values through tr(1) to quiet it.
+  #
+  # The two writes that did come from inputs -- the vcpkg triplets in
+  # consumption.yml and sanitizers.yml -- are not what this filter is for.
+  # Those are reduced to the triplet character set at the step and refused if
+  # that changes them, and it is the reduced value that gets written. That
+  # cleared consumption.yml outright. sanitizers.yml still reports, because
+  # the same step also writes matrix.label and matrix.version, and because the
+  # query's shell model keeps drawing a path from the input through a script
+  # that branches three ways -- so it would be filtered here on the matrix
+  # sources whatever the triplets did.
+  #
+  # actions/envvar-injection/critical is deliberately still enabled. It is the
+  # variant that fires in a privileged context, which is the one that would
+  # matter, and no filter here touches it.
+  - exclude:
+      id: actions/envvar-injection/medium
