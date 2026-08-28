@@ -133,6 +133,15 @@ no prefix path. Two inputs cover the libraries where it is not:
         https://github.com/rhalbersma/xstd.git 7f7cbdd6e4174107ea062484f31c81fbfe220f7a
 ```
 
+The library is configured against vcpkg's toolchain file, which puts vcpkg in
+*manifest* mode because the tree being configured is the caller's repository
+root, where its `vcpkg.json` lives. The consumers are not: each is its own
+small project with no `vcpkg.json`, so the same toolchain file would put them
+in *classic* mode, looking in vcpkg's global `installed/` tree, which a
+manifest install never writes to. They get
+`<workspace>/vcpkg_installed/<triplet>` on `CMAKE_PREFIX_PATH` instead, and no
+toolchain file.
+
 `dependency_repos` exists because `install(EXPORT)` requires every dependency
 of an exported target to come from `find_package`: a FetchContent build tree
 cannot be exported. A library that finds its dependency with

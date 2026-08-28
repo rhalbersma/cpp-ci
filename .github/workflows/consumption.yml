@@ -225,47 +225,78 @@ jobs:
           echo "DEPS_PREFIX=$prefix" >> "$GITHUB_ENV"
           echo "installed $n dependency repositories into $prefix"
 
-      # One place where the two optional features become command-line
-      # arguments, since all four configures below need the same ones and a
-      # caller that asked for neither must get exactly what it got before.
+      # The library and its consumers do not get the same arguments, and the
+      # difference is the whole of what makes vcpkg work here.
+      #
+      # The library is configured against vcpkg's toolchain file. That puts
+      # vcpkg in MANIFEST mode, because the tree being configured is the
+      # caller's repository root, which is where its vcpkg.json lives.
+      #
+      # The consumers are not, and must not be. Each is its own little
+      # project with no vcpkg.json of its own, so the same toolchain file
+      # puts them in CLASSIC mode instead, looking in vcpkg's global
+      # installed/ tree -- which the manifest install never wrote to. The
+      # ports are under <workspace>/vcpkg_installed/<triplet>, so the
+      # consumers get that on CMAKE_PREFIX_PATH and no toolchain file at all.
+      # Configured the other way round, a consumer of a library with any real
+      # dependency fails at find_package with the port sitting on disk a
+      # directory away.
+      #
       # Read back with "read -ra" rather than interpolated bare: splitting is
       # wanted here, globbing is not.
-      - name: Assemble the shared configure arguments
+      - name: Assemble the configure arguments
         env:
           USE_VCPKG: ${{ inputs.vcpkg }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           OVERLAY_TRIPLETS: ${{ steps.overlay.outputs.triplets }}
         run: |
           set -euo pipefail
-          shared=""
+
+          # The library's side: vcpkg's toolchain file, in manifest mode.
+          library=""
           if [ "$USE_VCPKG" = true ]; then
-            shared="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-            shared="$shared -DVCPKG_TARGET_TRIPLET=$TRIPLET"
-            shared="$shared -DVCPKG_OVERLAY_TRIPLETS=$OVERLAY_TRIPLETS"
+            library="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+            library="$library -DVCPKG_TARGET_TRIPLET=$TRIPLET"
+            library="$library -DVCPKG_OVERLAY_TRIPLETS=$OVERLAY_TRIPLETS"
           fi
-          echo "SHARED_CMAKE_ARGS=$shared" >> "$GITHUB_ENV"
+          echo "LIBRARY_VCPKG_ARGS=$library" >> "$GITHUB_ENV"
 
-          # CMAKE_PREFIX_PATH is a CMake list, so the separator is a
-          # semicolon and not a colon -- a colon-separated one finds nothing
-          # and says nothing. Built here rather than inline four times so an
-          # absent deps prefix leaves no empty list entry behind: the library
-          # and the two source-tree consumers see the dependencies alone, the
-          # find_package consumer sees the library's own install prefix first
-          # and the dependencies its package config find_dependency's after.
+          # The consumers' side: prefixes, not a toolchain. CMAKE_PREFIX_PATH
+          # is a CMake list, so the separator is a semicolon and not a colon
+          # -- a colon-separated one finds nothing and says nothing. Built
+          # here rather than inline three times so that an absent piece
+          # leaves no empty list entry behind.
           deps="${DEPS_PREFIX:-}"
-          install_prefix="$GITHUB_WORKSPACE/install-prefix"
+          common=""
           if [ -n "$deps" ]; then
-            echo "DEPS_CMAKE_ARGS=-DCMAKE_PREFIX_PATH=$deps" >> "$GITHUB_ENV"
-            echo "CONSUMER_PREFIX_PATH=$install_prefix;$deps" >> "$GITHUB_ENV"
-          else
-            # Empty rather than -DCMAKE_PREFIX_PATH=, so a caller that asked
-            # for no dependencies gets the command line it got before.
-            echo "DEPS_CMAKE_ARGS=" >> "$GITHUB_ENV"
-            echo "CONSUMER_PREFIX_PATH=$install_prefix" >> "$GITHUB_ENV"
+            common="$deps"
+          fi
+          if [ "$USE_VCPKG" = true ]; then
+            manifest="$GITHUB_WORKSPACE/vcpkg_installed/$TRIPLET"
+            if [ ! -d "$manifest" ]; then
+              echo "::error::vcpkg was requested but $manifest does not exist: the manifest install wrote somewhere else"
+              exit 1
+            fi
+            common="${common:+$common;}$manifest"
           fi
 
-          echo "shared configure arguments: ${shared:-(none)}"
-          echo "dependency prefix: ${deps:-(none)}"
+          # The library still takes the dependency prefix directly; vcpkg
+          # reaches it through the toolchain file rather than this.
+          echo "DEPS_CMAKE_ARGS=${deps:+-DCMAKE_PREFIX_PATH=$deps}" >> "$GITHUB_ENV"
+
+          # find_package additionally needs the library's own install tree,
+          # and it goes first so the package under test wins over anything of
+          # the same name that a dependency prefix happens to carry.
+          install_prefix="$GITHUB_WORKSPACE/install-prefix"
+          echo "CONSUMER_PREFIX_PATH=${install_prefix}${common:+;$common}" >> "$GITHUB_ENV"
+
+          # The two source-tree consumers configure the library themselves,
+          # so they need everything its own configure needed except the
+          # install tree, which does not exist as far as they are concerned.
+          echo "SOURCE_CONSUMER_ARGS=${common:+-DCMAKE_PREFIX_PATH=$common}" >> "$GITHUB_ENV"
+
+          echo "library vcpkg arguments: ${library:-(none)}"
+          echo "consumer prefix path:    ${install_prefix}${common:+;$common}"
 
       # Only the consumption models the README documents, so -DBUILD_TESTING=OFF
       # drops the need for the test dependencies here.
@@ -274,14 +305,14 @@ jobs:
           CALLER_CMAKE_ARGS: ${{ inputs.cmake_args }}
         run: |
           set -euo pipefail
-          read -ra shared <<< "${SHARED_CMAKE_ARGS:-}"
+          read -ra library <<< "${LIBRARY_VCPKG_ARGS:-}"
           read -ra deps <<< "${DEPS_CMAKE_ARGS:-}"
           read -ra caller <<< "$CALLER_CMAKE_ARGS"
           cmake -S . -B build \
             -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
             -DBUILD_TESTING=OFF \
-            "${shared[@]}" "${deps[@]}" "${caller[@]}"
+            "${library[@]}" "${deps[@]}" "${caller[@]}"
 
       - name: Install
         run: cmake --install build --prefix "$GITHUB_WORKSPACE/install-prefix"
@@ -292,11 +323,9 @@ jobs:
           CONSUMER_DIR: ${{ inputs.consumer_dir }}
         run: |
           set -euo pipefail
-          read -ra shared <<< "${SHARED_CMAKE_ARGS:-}"
           cmake -S "$CONSUMER_DIR/find_package" -B build-find-package \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
-            -DCMAKE_PREFIX_PATH="$CONSUMER_PREFIX_PATH" \
-            "${shared[@]}"
+            -DCMAKE_PREFIX_PATH="$CONSUMER_PREFIX_PATH"
           cmake --build build-find-package -v
           ./build-find-package/main
 
@@ -306,11 +335,10 @@ jobs:
           CONSUMER_DIR: ${{ inputs.consumer_dir }}
         run: |
           set -euo pipefail
-          read -ra shared <<< "${SHARED_CMAKE_ARGS:-}"
-          read -ra deps <<< "${DEPS_CMAKE_ARGS:-}"
+          read -ra prefix <<< "${SOURCE_CONSUMER_ARGS:-}"
           cmake -S "$CONSUMER_DIR/add_subdirectory" -B build-add-subdirectory \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
-            "${shared[@]}" "${deps[@]}"
+            "${prefix[@]}"
           cmake --build build-add-subdirectory -v
           ./build-add-subdirectory/main
 
@@ -320,10 +348,9 @@ jobs:
           CONSUMER_DIR: ${{ inputs.consumer_dir }}
         run: |
           set -euo pipefail
-          read -ra shared <<< "${SHARED_CMAKE_ARGS:-}"
-          read -ra deps <<< "${DEPS_CMAKE_ARGS:-}"
+          read -ra prefix <<< "${SOURCE_CONSUMER_ARGS:-}"
           cmake -S "$CONSUMER_DIR/fetch_content" -B build-fetch-content \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
-            "${shared[@]}" "${deps[@]}"
+            "${prefix[@]}"
           cmake --build build-fetch-content -v
           ./build-fetch-content/main
