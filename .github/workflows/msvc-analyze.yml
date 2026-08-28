@@ -95,7 +95,12 @@ jobs:
           reduce_on_pr: "false"
 
   analyze:
-    name: msvc-analyze
+    # The rung is in the name because GitHub appends the entire matrix entry to
+    # a job name that does not mention it, and this check reported as
+    # "msvc-analyze (2026, windows-2025, Visual Studio 18 2026, false,
+    # qualification, Debug)" -- a name that also changes whenever a rung's
+    # runner or generator does, which is no name to put in a ruleset.
+    name: msvc-analyze ${{ matrix.label }}
     needs: ladder
     runs-on: ${{ matrix.os }}
     strategy:
@@ -200,9 +205,15 @@ jobs:
           set -euo pipefail
           echo "Analysis flags: $ANALYZE_FLAGS"
           read -ra extra <<< "$EXTRA_CMAKE"
+          # CXXFLAGS, not -DCMAKE_CXX_FLAGS. CMake seeds CMAKE_CXX_FLAGS from
+          # CMAKE_CXX_FLAGS_INIT and this variable, so the platform's own flags
+          # survive; setting the cache entry on the command line replaces them.
+          # On MSVC that silently drops /EHsc, and the STL then reports C4530
+          # from inside <ostream> -- which /WX turns into an error, failing the
+          # leg on a flag this workflow removed rather than on a finding.
+          export CXXFLAGS="$ANALYZE_FLAGS"
           cmake -S . -B build \
             -G "$GENERATOR" \
-            -DCMAKE_CXX_FLAGS="$ANALYZE_FLAGS" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
             "${extra[@]}"
@@ -230,10 +241,12 @@ jobs:
           set -euo pipefail
           echo "Analysis flags: $ANALYZE_FLAGS"
           read -ra extra <<< "$EXTRA_CMAKE"
+          # CXXFLAGS rather than the cache entry, for the reason the
+          # non-preview Configure gives.
+          export CXXFLAGS="$ANALYZE_FLAGS"
           cmake -S . -B build \
             -G "$GENERATOR" \
             -T "$TOOLSET" \
-            -DCMAKE_CXX_FLAGS="$ANALYZE_FLAGS" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
             "${extra[@]}"
