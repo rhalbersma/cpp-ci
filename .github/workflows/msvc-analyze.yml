@@ -280,3 +280,20 @@ jobs:
         with:
           name: msvc-analyze-report-${{ matrix.label }}
           path: msvc-analyze-report.txt
+
+  all:
+    name: all
+    needs: analyze
+    # Not always(): that runs on cancellation too. See gcc.yml.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless every leg succeeded
+        env:
+          RESULT: ${{ needs.analyze.result }}
+        run: |
+          set -euo pipefail
+          echo "legs: $RESULT"
+          # A skipped matrix means the ladder job failed or emitted nothing,
+          # which is a red run, not an absent one.
+          test "$RESULT" = success
