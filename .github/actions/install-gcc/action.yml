@@ -30,6 +30,8 @@ runs:
     - name: Install GCC ${{ inputs.version }} (release)
       if: inputs.trunk != 'true'
       shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
       run: |
         # add-apt-repository resolves a ppa: shorthand through Launchpad's
         # web API via launchpadlib, before apt is involved at all, so the
@@ -49,7 +51,7 @@ runs:
           sleep $((i * 10))
         done
         sudo apt-get update
-        sudo apt-get install -y "g++-${{ inputs.version }}"
+        sudo apt-get install -y "g++-${VERSION}"
 
     - name: Install GCC trunk snapshot
       if: inputs.trunk == 'true'
