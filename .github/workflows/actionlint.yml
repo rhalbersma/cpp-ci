@@ -79,7 +79,8 @@ jobs:
       - name: Check this repository's own pins
         if: github.repository == 'rhalbersma/cpp-ci'
         run: |
-          pip install --quiet pyyaml
+          pip install --quiet --require-hashes \
+            -r .github/scripts/requirements.txt
           python3 .github/scripts/check_internal_pins.py
 
       - name: Lint workflows
