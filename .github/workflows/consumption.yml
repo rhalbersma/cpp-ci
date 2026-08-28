@@ -29,6 +29,40 @@ on:
         type: string
         required: false
         default: test/consumer
+      vcpkg:
+        description: >
+          Install the manifest's dependencies with vcpkg, and configure the
+          library and its consumers against vcpkg's toolchain file. Off by
+          default, because -DBUILD_TESTING=OFF is normally enough to leave a
+          header-only library with no dependency at all here. Turn it on when
+          the library itself -- not only its tests -- has a
+          find_package(... REQUIRED) that a tests-off configure still has to
+          satisfy, and which therefore has to be findable by a consumer too.
+        type: boolean
+        required: false
+        default: false
+      vcpkg_triplet:
+        description: Overlay triplet building the dependencies with the GCC under test.
+        type: string
+        required: false
+        default: x64-linux-gcc
+      dependency_repos:
+        description: >
+          CMake projects to clone, build and install into a shared prefix
+          before the library is configured, one "<url> <revision>" per line.
+          Both fields are required: a floating branch would make this leg
+          depend on whatever was pushed upstream this morning.
+
+          This exists because install(EXPORT) requires every dependency of an
+          exported target to come from find_package -- a FetchContent build
+          tree cannot be exported. A library that finds its dependency with
+          find_package(... QUIET) and falls back to FetchContent therefore
+          configures fine on the add_subdirectory and fetch_content models
+          and produces an invalid package on the find_package one, unless
+          that dependency is really installed first. Which is what this does.
+        type: string
+        required: false
+        default: ""
       cmake_args:
         description: Extra -D arguments for configuring the library itself.
         type: string
@@ -39,6 +73,9 @@ jobs:
   consume:
     name: Consume
     runs-on: ubuntu-24.04
+    env:
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -98,6 +135,11 @@ jobs:
           set -euo pipefail
           echo "TOOLCHAIN_CC=gcc-${VERSION}"  >> "$GITHUB_ENV"
           echo "TOOLCHAIN_CXX=g++-${VERSION}" >> "$GITHUB_ENV"
+          # Read again by the overlay triplet's chainloaded toolchain, so the
+          # ports are built with the compiler under test rather than the
+          # runner image's default.
+          echo "VCPKG_GCC_VERSION=${VERSION}"  >> "$GITHUB_ENV"
+          echo "VCPKG_CACHE_KEY=vcpkg-consumption-${VERSION}-" >> "$GITHUB_ENV"
 
       - name: Report toolchain versions
         run: |
@@ -105,40 +147,183 @@ jobs:
           "$TOOLCHAIN_CXX" --version
           cmake --version
 
+      - name: Locate the overlay triplets
+        if: inputs.vcpkg
+        id: overlay
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@0061e0a7dcc5197821232597043379f5a09cbff9
+
+      - name: Restore vcpkg binary cache
+        if: inputs.vcpkg
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      - name: Install the dependencies
+        if: inputs.vcpkg
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@0061e0a7dcc5197821232597043379f5a09cbff9
+        with:
+          triplet: ${{ inputs.vcpkg_triplet }}
+          overlay_triplets: ${{ steps.overlay.outputs.triplets }}
+
+      # Keyed on the archives' contents: an unconditional save would add an
+      # entry per run and evict this repo's other caches.
+      - name: Save vcpkg binary cache
+        if: >-
+          inputs.vcpkg &&
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      # Deliberately not configured against vcpkg's toolchain file, even when
+      # the caller asked for vcpkg: manifest mode keys off the source tree
+      # being configured, so a dependency shipping its own vcpkg.json would
+      # install that repository's test dependencies here, tests-off or not.
+      # A dependency that genuinely needs vcpkg is a reason to grow another
+      # input, not to guess.
+      - name: Install the dependency repositories
+        if: inputs.dependency_repos != ''
+        env:
+          DEPENDENCY_REPOS: ${{ inputs.dependency_repos }}
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/deps-prefix"
+          n=0
+          while read -r url rev extra; do
+            if [ -z "$url" ]; then continue; fi
+            if [ -z "$rev" ] || [ -n "$extra" ]; then
+              echo "::error::dependency_repos wants '<url> <revision>' per line, got '$url $rev $extra'"
+              exit 1
+            fi
+            n=$((n + 1))
+            src="dep-src-$n"
+            git clone --no-checkout --quiet "$url" "$src"
+            # --detach on an explicit revision: a branch name here would make
+            # this leg depend on whatever upstream pushed this morning, which
+            # is the opposite of what pinning the caller's own CI buys.
+            git -C "$src" checkout --detach --quiet "$rev"
+            echo "installing $url at $rev"
+            # Earlier dependencies are on the prefix path, so a chain of them
+            # resolves in the order the caller listed them.
+            cmake -S "$src" -B "dep-build-$n" \
+              -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
+              -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
+              -DCMAKE_PREFIX_PATH="$prefix" \
+              -DBUILD_TESTING=OFF
+            cmake --install "dep-build-$n" --prefix "$prefix"
+          done <<< "$DEPENDENCY_REPOS"
+          if [ "$n" -eq 0 ]; then
+            echo "::error::dependency_repos was set but named no repository"
+            exit 1
+          fi
+          echo "DEPS_PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo "installed $n dependency repositories into $prefix"
+
+      # One place where the two optional features become command-line
+      # arguments, since all four configures below need the same ones and a
+      # caller that asked for neither must get exactly what it got before.
+      # Read back with "read -ra" rather than interpolated bare: splitting is
+      # wanted here, globbing is not.
+      - name: Assemble the shared configure arguments
+        env:
+          USE_VCPKG: ${{ inputs.vcpkg }}
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
+          OVERLAY_TRIPLETS: ${{ steps.overlay.outputs.triplets }}
+        run: |
+          set -euo pipefail
+          shared=""
+          if [ "$USE_VCPKG" = true ]; then
+            shared="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+            shared="$shared -DVCPKG_TARGET_TRIPLET=$TRIPLET"
+            shared="$shared -DVCPKG_OVERLAY_TRIPLETS=$OVERLAY_TRIPLETS"
+          fi
+          echo "SHARED_CMAKE_ARGS=$shared" >> "$GITHUB_ENV"
+
+          # CMAKE_PREFIX_PATH is a CMake list, so the separator is a
+          # semicolon and not a colon -- a colon-separated one finds nothing
+          # and says nothing. Built here rather than inline four times so an
+          # absent deps prefix leaves no empty list entry behind: the library
+          # and the two source-tree consumers see the dependencies alone, the
+          # find_package consumer sees the library's own install prefix first
+          # and the dependencies its package config find_dependency's after.
+          deps="${DEPS_PREFIX:-}"
+          install_prefix="$GITHUB_WORKSPACE/install-prefix"
+          if [ -n "$deps" ]; then
+            echo "DEPS_CMAKE_ARGS=-DCMAKE_PREFIX_PATH=$deps" >> "$GITHUB_ENV"
+            echo "CONSUMER_PREFIX_PATH=$install_prefix;$deps" >> "$GITHUB_ENV"
+          else
+            # Empty rather than -DCMAKE_PREFIX_PATH=, so a caller that asked
+            # for no dependencies gets the command line it got before.
+            echo "DEPS_CMAKE_ARGS=" >> "$GITHUB_ENV"
+            echo "CONSUMER_PREFIX_PATH=$install_prefix" >> "$GITHUB_ENV"
+          fi
+
+          echo "shared configure arguments: ${shared:-(none)}"
+          echo "dependency prefix: ${deps:-(none)}"
+
       # Only the consumption models the README documents, so -DBUILD_TESTING=OFF
-      # drops the need for vcpkg and Boost.Test here.
+      # drops the need for the test dependencies here.
       - name: Configure
-        run: >
-          cmake -S . -B build
-          -DCMAKE_C_COMPILER="$TOOLCHAIN_CC"
-          -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
-          -DBUILD_TESTING=OFF
-          ${{ inputs.cmake_args }}
+        env:
+          CALLER_CMAKE_ARGS: ${{ inputs.cmake_args }}
+        run: |
+          set -euo pipefail
+          read -ra shared <<< "${SHARED_CMAKE_ARGS:-}"
+          read -ra deps <<< "${DEPS_CMAKE_ARGS:-}"
+          read -ra caller <<< "$CALLER_CMAKE_ARGS"
+          cmake -S . -B build \
+            -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
+            -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
+            -DBUILD_TESTING=OFF \
+            "${shared[@]}" "${deps[@]}" "${caller[@]}"
 
       - name: Install
         run: cmake --install build --prefix "$GITHUB_WORKSPACE/install-prefix"
 
       - name: Consume with find_package
         if: hashFiles(format('{0}/find_package/CMakeLists.txt', inputs.consumer_dir)) != ''
+        env:
+          CONSUMER_DIR: ${{ inputs.consumer_dir }}
         run: |
-          cmake -S "${{ inputs.consumer_dir }}/find_package" -B build-find-package \
+          set -euo pipefail
+          read -ra shared <<< "${SHARED_CMAKE_ARGS:-}"
+          cmake -S "$CONSUMER_DIR/find_package" -B build-find-package \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
-            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/install-prefix"
+            -DCMAKE_PREFIX_PATH="$CONSUMER_PREFIX_PATH" \
+            "${shared[@]}"
           cmake --build build-find-package -v
           ./build-find-package/main
 
       - name: Consume with add_subdirectory
         if: hashFiles(format('{0}/add_subdirectory/CMakeLists.txt', inputs.consumer_dir)) != ''
+        env:
+          CONSUMER_DIR: ${{ inputs.consumer_dir }}
         run: |
-          cmake -S "${{ inputs.consumer_dir }}/add_subdirectory" -B build-add-subdirectory \
-            -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
+          set -euo pipefail
+          read -ra shared <<< "${SHARED_CMAKE_ARGS:-}"
+          read -ra deps <<< "${DEPS_CMAKE_ARGS:-}"
+          cmake -S "$CONSUMER_DIR/add_subdirectory" -B build-add-subdirectory \
+            -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
+            "${shared[@]}" "${deps[@]}"
           cmake --build build-add-subdirectory -v
           ./build-add-subdirectory/main
 
       - name: Consume with FetchContent
         if: hashFiles(format('{0}/fetch_content/CMakeLists.txt', inputs.consumer_dir)) != ''
+        env:
+          CONSUMER_DIR: ${{ inputs.consumer_dir }}
         run: |
-          cmake -S "${{ inputs.consumer_dir }}/fetch_content" -B build-fetch-content \
-            -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
+          set -euo pipefail
+          read -ra shared <<< "${SHARED_CMAKE_ARGS:-}"
+          read -ra deps <<< "${DEPS_CMAKE_ARGS:-}"
+          cmake -S "$CONSUMER_DIR/fetch_content" -B build-fetch-content \
+            -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
+            "${shared[@]}" "${deps[@]}"
           cmake --build build-fetch-content -v
           ./build-fetch-content/main

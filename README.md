@@ -108,6 +108,43 @@ workflow, so a group defined here would land in the caller's own group and
 cancel it. The stub knows whether it was reached by a push, a schedule, or a
 canary; these do not.
 
+### `consumption.yml`
+
+One job on one rung, configuring the library with `-DBUILD_TESTING=OFF` and
+then building each of `test/consumer/find_package`, `.../add_subdirectory` and
+`.../fetch_content` that exists. A repository documenting two of the three
+models passes; one documenting none fails, rather than reporting success
+having consumed nothing.
+
+Tests off is normally enough to leave a header-only library with no dependency
+at all here, which is why the default configures against no toolchain file and
+no prefix path. Two inputs cover the libraries where it is not:
+
+```yaml
+    with:
+      # The library itself -- not only its tests -- has a
+      # find_package(... REQUIRED), so a tests-off configure still needs it,
+      # and so does anyone consuming the installed package.
+      vcpkg: true
+      # Cloned, built and installed into a shared prefix before anything else
+      # is configured. One "<url> <revision>" per line; the revision is
+      # required, so this leg does not depend on what upstream pushed today.
+      dependency_repos: |
+        https://github.com/rhalbersma/xstd.git 7f7cbdd6e4174107ea062484f31c81fbfe220f7a
+```
+
+`dependency_repos` exists because `install(EXPORT)` requires every dependency
+of an exported target to come from `find_package`: a FetchContent build tree
+cannot be exported. A library that finds its dependency with
+`find_package(... QUIET)` and falls back to FetchContent therefore configures
+fine on the `add_subdirectory` and `fetch_content` models and produces an
+invalid package on the `find_package` one -- unless that dependency is really
+installed first. Each repository is configured with the compiler under test
+and with the prefix on its path, so a chain of them resolves in the order
+given; none of them is configured against vcpkg's toolchain file, since
+manifest mode keys off the tree being configured and a dependency shipping its
+own `vcpkg.json` would install *that* repository's test dependencies here.
+
 ### `sanitizers.yml`
 
 Five Linux legs, each building and running the caller's test suite in Debug,
