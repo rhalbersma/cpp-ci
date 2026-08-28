@@ -1,0 +1,238 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: MSVC Analyze
+
+permissions:
+  contents: read
+
+# No concurrency group; see gcc.yml. It belongs to the calling stub.
+
+# MSVC's static analyser, in the role clang-tidy.yml fills for Clang: one rung,
+# one configuration, findings rather than a test result.
+#
+# The two are not interchangeable. clang-tidy never builds - it reads a compile
+# database and runs a separate binary - whereas /analyze is a compiler flag, so
+# this workflow compiles the whole tree and a genuine compile error surfaces
+# here as well. And /analyze only ever sees translation units, so it cannot do
+# clang-tidy.yml's second header pass, which feeds each header in as a primary
+# input for misc-include-cleaner's benefit. What it does cover for free is the
+# first pass: a caller that generates per-header self-sufficiency targets has
+# those analysed like any other translation unit, because they are ones.
+on:
+  workflow_call:
+    inputs:
+      tier:
+        description: >
+          Rung supplying the analyser. Its own input, like clang-tidy's: a
+          toolset gains and retires checks, so it changes the verdict on code
+          nobody touched. Defaults to qualification rather than stable because
+          the analyser is only as useful as the dialect it can parse, and the
+          stable rung is the oldest one a caller still supports.
+        type: string
+        required: false
+        default: qualification
+      build_type:
+        description: >
+          One CMake configuration. Debug rather than Release, for the reason
+          clang-tidy.yml gives: -DNDEBUG rewrites every assert before the
+          analyser sees it.
+        type: string
+        required: false
+        default: Debug
+      vcpkg_triplet:
+        description: Triplet for the dependencies the configure step needs.
+        type: string
+        required: false
+        default: x64-windows
+      cache_prefix:
+        description: Distinguishes this caller's vcpkg cache from the others'.
+        type: string
+        required: false
+        default: msvc-analyze
+      analyze_args:
+        description: >
+          Extra /analyze arguments, appended after the defaults below. This is
+          where a ruleset goes, and where the C++ Core Guidelines checkers are
+          switched on; both are spelled differently across toolsets, so they
+          are the caller's to state rather than this workflow's to assume.
+        type: string
+        required: false
+        default: ""
+      warnings_as_errors:
+        description: >
+          Whether a finding fails the run. True by default, matching
+          clang-tidy's WarningsAsErrors: a check nobody has to act on stops
+          being a check.
+        type: boolean
+        required: false
+        default: true
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  ladder:
+    name: Resolve the ladder
+    runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.ladder.outputs.matrix }}
+    steps:
+      # Matrix mode for a single rung: the runner image and the generator are
+      # per-rung facts, and only this mode reports them. VS 2026 needs the
+      # newer image, so the leg has to carry its own runner.
+      - id: ladder
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@0061e0a7dcc5197821232597043379f5a09cbff9
+        with:
+          mode: matrix
+          toolchain: msvc
+          tiers: ${{ inputs.tier }}
+          build_types: ${{ inputs.build_type }}
+          reduce_on_pr: "false"
+
+  analyze:
+    name: msvc-analyze
+    needs: ladder
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.ladder.outputs.legs) }}
+    env:
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Name the cache
+        shell: bash
+        env:
+          PREFIX: ${{ inputs.cache_prefix }}
+          LABEL: ${{ matrix.label }}
+        run: echo "VCPKG_CACHE_KEY=vcpkg-${PREFIX}-${LABEL}-" >> "$GITHUB_ENV"
+
+      - name: Install the MSVC Preview toolset
+        if: matrix.preview_channel == 'true'
+        id: preview
+        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@0061e0a7dcc5197821232597043379f5a09cbff9
+
+      - name: Report toolchain versions
+        shell: pwsh
+        env:
+          PREVIEW_TOOLSET: ${{ steps.preview.outputs.toolset }}
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $instance = & $vswhere -products * -format json | ConvertFrom-Json | Select-Object -First 1
+          if (-not $instance) {
+            Write-Host "No Visual Studio instance found by vswhere"
+            exit 1
+          }
+          $installPath = $instance.installationPath
+          Write-Host "Visual Studio: $($instance.displayName) $($instance.installationVersion)"
+          $toolset = if ($env:PREVIEW_TOOLSET) {
+            $env:PREVIEW_TOOLSET
+          } else {
+            (Get-Content "$installPath\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          }
+          Write-Host "MSVC toolset: $toolset"
+          & "$installPath\VC\Tools\MSVC\$toolset\bin\Hostx64\x64\cl.exe" /Bv
+          cmake --version
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      - name: Install the test dependencies
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@0061e0a7dcc5197821232597043379f5a09cbff9
+        with:
+          triplet: ${{ inputs.vcpkg_triplet }}
+
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      # /analyze:external- and /external:W0 keep the findings to code the
+      # caller owns. Without them every vcpkg and STL header is analysed too,
+      # which is both the bulk of the runtime and none of the actionable
+      # results. /WX is what makes a finding mean something.
+      - name: Compose the analysis flags
+        shell: bash
+        env:
+          EXTRA: ${{ inputs.analyze_args }}
+          WERROR: ${{ inputs.warnings_as_errors }}
+        run: |
+          set -euo pipefail
+          flags="/analyze /analyze:external- /external:W0 /external:anglebrackets"
+          if [ "$WERROR" = "true" ]; then
+            flags="$flags /WX"
+          fi
+          if [ -n "$EXTRA" ]; then
+            flags="$flags $EXTRA"
+          fi
+          echo "Analysis flags: $flags"
+          echo "ANALYZE_FLAGS=$flags" >> "$GITHUB_ENV"
+
+      - name: Configure
+        if: matrix.preview_channel != 'true'
+        shell: bash
+        run: >
+          cmake -S . -B build
+          -G "${{ matrix.generator }}"
+          -DCMAKE_CXX_FLAGS="$ANALYZE_FLAGS"
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
+          ${{ inputs.cmake_args }}
+
+      - name: Configure (preview toolset)
+        if: matrix.preview_channel == 'true'
+        shell: bash
+        run: >
+          cmake -S . -B build
+          -G "${{ matrix.generator }}"
+          -T "${{ steps.preview.outputs.toolset }}"
+          -DCMAKE_CXX_FLAGS="$ANALYZE_FLAGS"
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
+          ${{ inputs.cmake_args }}
+
+      # The analysis is the compile, so this step is the check. "shell: bash"
+      # for the -o pipefail, without which tee's status wins and a failing
+      # build reports success.
+      - name: Analyze
+        shell: bash
+        run: |
+          cmake --build build --config ${{ inputs.build_type }} -v 2>&1 \
+            | tee msvc-analyze-report.txt
+
+      - name: Publish the analysis summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### MSVC /analyze findings'
+            echo '```'
+            grep -E ': (warning|error) C[0-9]+' msvc-analyze-report.txt \
+              | sort -u || echo 'No findings.'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the analysis report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: msvc-analyze-report-${{ matrix.label }}
+          path: msvc-analyze-report.txt
