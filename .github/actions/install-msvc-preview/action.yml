@@ -27,9 +27,34 @@ runs:
     - id: manifest
       shell: pwsh
       run: |
-        $resp = Invoke-WebRequest -Uri 'https://aka.ms/vs/18/pre/channel' -Method Head -UseBasicParsing
-        $version = $resp.Headers['ETag']
-        if (-not $version) { $version = $resp.Headers['Last-Modified'] }
+        # Retried, like every other network lookup here. aka.ms closes
+        # connections under load, and this one had no retry:
+        #
+        #   Unable to read data from the transport connection: An existing
+        #   connection was forcibly closed by the remote host..
+        #
+        # twenty seconds in, which failed a caller's MSVC leg outright. The
+        # request only supplies a cache key -- it decides what the preview
+        # install is keyed on, not what gets installed -- so a single
+        # transport error is the weakest possible reason to fail a leg.
+        #
+        # Five attempts backing off to twenty seconds, the shape install-gcc
+        # uses for the Launchpad call it had to retry for the same reason.
+        $version = $null
+        foreach ($attempt in 1..5) {
+          try {
+            $resp = Invoke-WebRequest -Uri 'https://aka.ms/vs/18/pre/channel' -Method Head -UseBasicParsing
+            $version = $resp.Headers['ETag']
+            if (-not $version) { $version = $resp.Headers['Last-Modified'] }
+            break
+          } catch {
+            # ${attempt} rather than $attempt: a variable followed by a colon
+            # parses as a namespace qualifier.
+            Write-Host "Channel manifest attempt ${attempt} failed: $($_.Exception.Message)"
+            if ($attempt -eq 5) { throw }
+            Start-Sleep -Seconds ($attempt * 5)
+          }
+        }
         Write-Host "Channel manifest version: $version"
         echo "version=$version" >> $env:GITHUB_OUTPUT
 
