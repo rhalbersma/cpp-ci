@@ -13,14 +13,20 @@ permissions:
 on:
   workflow_call:
     inputs:
-      tier:
+      tiers:
         description: >
-          Rung supplying clang-tidy. Its own input, like clang-format's: a
-          release gains, renames and retires checks, so it changes the verdict
-          on code nobody touched.
+          Comma-separated rungs supplying clang-tidy, one leg each. Its own
+          input, like clang-format's: a release gains, renames and retires
+          checks, so it changes the verdict on code nobody touched.
+
+          All three by default, matching the compiler ladders. A README that
+          says Clang 22, 23 and 24 are green is a claim about what a reader
+          can build with, and a reader who builds with 24 runs clang-tidy-24
+          over their own translation units. Checking one rung answered for
+          one of them.
         type: string
         required: false
-        default: stable
+        default: stable,qualification,development
       gcc_tier:
         description: Rung supplying the libstdc++ Clang compiles against.
         type: string
@@ -66,9 +72,34 @@ on:
         default: ""
 
 jobs:
-  tidy:
-    name: clang-tidy
+  # The rungs, resolved once. clang-tidy needs no per-rung runner -- every leg
+  # is ubuntu-24.04 -- so this exists only to turn "which rungs" into a matrix,
+  # the compiler workflows' shape for the same reason they have it.
+  ladder:
+    name: Resolve the ladder
     runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.ladder.outputs.matrix }}
+    steps:
+      # One build type: clang-tidy reads a compile database rather than
+      # building, and Debug is the configuration it is read from, for the
+      # reason the Configure step gives.
+      - id: ladder
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@0061e0a7dcc5197821232597043379f5a09cbff9
+        with:
+          mode: matrix
+          toolchain: clang
+          tiers: ${{ inputs.tiers }}
+          build_types: Debug
+          reduce_on_pr: "false"
+
+  tidy:
+    name: clang-tidy ${{ matrix.label }}
+    needs: ladder
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.ladder.outputs.legs) }}
     env:
       VCPKG_BINARY_SOURCES: "clear;default,readwrite"
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
@@ -77,21 +108,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@0061e0a7dcc5197821232597043379f5a09cbff9
-
-      - name: Resolve the toolchain on this rung
-        id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@0061e0a7dcc5197821232597043379f5a09cbff9
-        with:
-          toolchain: clang
-          tier: ${{ inputs.tier }}
-
-      - name: Require the rung to be filled
-        if: steps.toolchain.outputs.supported != 'true'
-        env:
-          TIER: ${{ inputs.tier }}
-        run: |
-          echo "::error::clang has no $TIER rung"
-          exit 1
 
       - name: Resolve the GCC supplying libstdc++
         id: libstdcxx
@@ -112,18 +128,22 @@ jobs:
       - name: Install Clang and clang-tidy
         uses: rhalbersma/cpp-ci/.github/actions/install-clang@0061e0a7dcc5197821232597043379f5a09cbff9
         with:
-          version: ${{ steps.toolchain.outputs.version }}
-          llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
+          version: ${{ matrix.version }}
+          llvm_suffix: ${{ matrix.llvm_suffix }}
           tidy: "true"
 
       - name: Name the toolchain and its cache
         env:
-          VERSION: ${{ steps.toolchain.outputs.version }}
+          VERSION: ${{ matrix.version }}
+          LABEL: ${{ matrix.label }}
         run: |
           set -euo pipefail
           echo "TOOLCHAIN_CC=clang-${VERSION}"    >> "$GITHUB_ENV"
           echo "TOOLCHAIN_CXX=clang++-${VERSION}" >> "$GITHUB_ENV"
-          echo "VCPKG_CACHE_KEY=vcpkg-clang-tidy-" >> "$GITHUB_ENV"
+          # The rung is part of the key. Each leg builds the dependencies with
+          # its own Clang, so one key across the ladder would hand a leg
+          # another rung's binaries.
+          echo "VCPKG_CACHE_KEY=vcpkg-clang-tidy-${LABEL}-" >> "$GITHUB_ENV"
 
       # vcpkg's own x-gha backend was removed, so cache its binary packages
       # with actions/cache; the archives are named by ABI hash.
@@ -195,7 +215,7 @@ jobs:
         if: inputs.self_sufficiency_regex != ''
         shell: bash
         env:
-          VERSION: ${{ steps.toolchain.outputs.version }}
+          VERSION: ${{ matrix.version }}
           PATTERN: ${{ inputs.self_sufficiency_regex }}
         run: |
           "run-clang-tidy-${VERSION}" -quiet -p build "$PATTERN" 2>&1 | tee clang-tidy-report.txt
@@ -205,7 +225,7 @@ jobs:
       - name: Check direct header dependencies
         shell: bash
         env:
-          VERSION: ${{ steps.toolchain.outputs.version }}
+          VERSION: ${{ matrix.version }}
           HEADER_DIR: ${{ inputs.header_dir }}
           HEADER_EXCLUDE: ${{ inputs.header_exclude }}
           ADAPTED_DIRS: ${{ inputs.adapted_dirs }}
@@ -236,24 +256,47 @@ jobs:
         if: inputs.sources_regex != ''
         shell: bash
         env:
-          VERSION: ${{ steps.toolchain.outputs.version }}
+          VERSION: ${{ matrix.version }}
           PATTERN: ${{ inputs.sources_regex }}
         run: |
           "run-clang-tidy-${VERSION}" -quiet -p build "$PATTERN" 2>&1 | tee -a clang-tidy-report.txt
 
       - name: Publish clang-tidy summary
         if: always()
+        env:
+          LABEL: ${{ matrix.label }}
         run: |
           {
-            echo '### clang-tidy findings'
+            echo "### clang-tidy findings on ${LABEL}"
             echo '```'
             grep -E ': (error|warning):' clang-tidy-report.txt || echo 'No findings.'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Named per rung: upload-artifact refuses a name another leg already
+      # used, so one name across the ladder fails whichever leg finishes second.
       - name: Upload clang-tidy report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: clang-tidy-report
+          name: clang-tidy-report-${{ matrix.label }}
           path: clang-tidy-report.txt
+
+  # One check name that does not move as rungs come and go, the way gcc.yml and
+  # its siblings end. Callers require this rather than the individual legs.
+  all:
+    name: all
+    needs: tidy
+    # Not always(): that runs on cancellation too. See gcc.yml.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless every leg succeeded
+        env:
+          RESULT: ${{ needs.tidy.result }}
+        run: |
+          set -euo pipefail
+          echo "legs: $RESULT"
+          # A skipped matrix means the ladder job failed or emitted nothing,
+          # which is a red run, not an absent one.
+          test "$RESULT" = success
