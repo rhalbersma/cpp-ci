@@ -360,23 +360,37 @@ jobs:
           # libc++ is what it is there to use. clang-libc++.yml drops them for
           # the same reason.
           SANITIZER_FLAGS: ${{ matrix.flags }} ${{ matrix.libcxx != true && matrix.cxxflags || '' }}
-        run: >
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_COMPILER="$TOOLCHAIN_CC"
-          -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
-          -DCMAKE_CXX_FLAGS="$SANITIZER_FLAGS $IGNORELIST_FLAG ${{ inputs.cxx_flags }}"
-          -DCMAKE_EXE_LINKER_FLAGS="$SANITIZER_FLAGS"
-          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET"
-          -DVCPKG_OVERLAY_TRIPLETS="${{ steps.overlay.outputs.triplets }}"
-          ${{ inputs.cmake_args }}
+          CXX_FLAGS: ${{ inputs.cxx_flags }}
+          OVERLAY_TRIPLETS: ${{ steps.overlay.outputs.triplets }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -ra extra <<< "$EXTRA_CMAKE"
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
+            -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
+            -DCMAKE_CXX_FLAGS="$SANITIZER_FLAGS $IGNORELIST_FLAG $CXX_FLAGS" \
+            -DCMAKE_EXE_LINKER_FLAGS="$SANITIZER_FLAGS" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
+            -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
+            "${extra[@]}"
 
       - name: Build
         run: cmake --build build -v
 
+      # read -ra: matrix.options is a list of NAME=VALUE settings for env,
+      # so it has to word-split -- but unquoted it would glob as well.
       - name: Test
-        run: env ${{ matrix.options }} ctest --test-dir build --output-on-failure
+        shell: bash
+        env:
+          OPTIONS: ${{ matrix.options }}
+        run: |
+          set -euo pipefail
+          read -ra options <<< "$OPTIONS"
+          env "${options[@]}" ctest --test-dir build --output-on-failure
 
   # One check name that does not move, for branch protection to require.
   #

@@ -52,8 +52,10 @@ jobs:
 
       - name: Require the rung to be filled
         if: steps.toolchain.outputs.supported != 'true'
+        env:
+          TIER: ${{ inputs.tier }}
         run: |
-          echo "::error::clang has no ${{ inputs.tier }} rung"
+          echo "::error::clang has no $TIER rung"
           exit 1
 
       - name: Install clang-format

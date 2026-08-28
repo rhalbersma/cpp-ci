@@ -132,13 +132,21 @@ jobs:
       # No compiler named: DEVELOPER_DIR has already chosen it, and naming it
       # again would only risk disagreeing.
       - name: Configure
-        run: >
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          -DCMAKE_CXX_FLAGS="${{ inputs.cxx_flags }}"
-          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
-          ${{ inputs.cmake_args }}
+        shell: bash
+        env:
+          BUILD_TYPE: ${{ matrix.build_type }}
+          CXX_FLAGS: ${{ inputs.cxx_flags }}
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+        run: |
+          set -euo pipefail
+          read -ra extra <<< "$EXTRA_CMAKE"
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+            -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            "${extra[@]}"
 
       - name: Build
         run: cmake --build build -v
