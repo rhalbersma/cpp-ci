@@ -13,13 +13,27 @@ name: Scorecard
 permissions:
   contents: read
 
-# Concurrency belongs to a calling stub -- but this workflow also runs for
-# this repository, where there is no stub to hold it, so the group is declared
-# for the self-run triggers below. github.workflow rather than
-# github.workflow_ref: the latter names the caller inside a called workflow,
-# which is how a shared workflow once cancelled its own caller.
+# Concurrency belongs to a calling stub -- but this workflow also runs for this
+# repository, where there is no stub to hold it, so a group is declared here for
+# the self-run triggers below.
+#
+# The trailing literal is load-bearing. Both github.workflow and github.ref name
+# the CALLER inside a called workflow, so without it this group evaluates to
+# precisely the string a caller's own conventional group evaluates to. This
+# workflow would then take that group with cancel-in-progress and cancel the run
+# that called it before any job is created -- the caller sees its Scorecard run
+# fail in about a second having started nothing at all. xstd hit exactly that on
+# pinning v0.3.1. The note that used to stand here, that github.workflow was the
+# safe choice and github.workflow_ref the dangerous one, had it wrong: inside a
+# called workflow both name the caller, and a suffix no caller would write is
+# what actually separates the two groups.
+#
+# Serialisation is unaffected. Groups are scoped per repository, and every run
+# reaching this line -- self-run or called -- derives the same string from the
+# same workflow name and ref, so consecutive runs still collide and the later
+# one still wins.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-cpp-ci-scorecard
   cancel-in-progress: true
 
 # This repository is a dependency of every repository that calls it, so its own
