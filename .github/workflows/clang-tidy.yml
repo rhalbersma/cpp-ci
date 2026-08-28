@@ -263,9 +263,11 @@ jobs:
 
       - name: Publish clang-tidy summary
         if: always()
+        env:
+          LABEL: ${{ matrix.label }}
         run: |
           {
-            echo "### clang-tidy findings on ${{ matrix.label }}"
+            echo "### clang-tidy findings on ${LABEL}"
             echo '```'
             grep -E ': (error|warning):' clang-tidy-report.txt || echo 'No findings.'
             echo '```'
