@@ -141,12 +141,19 @@ jobs:
         run: |
           set -euo pipefail
           read -ra extra <<< "$EXTRA_CMAKE"
+          # The macOS runners' /bin/bash is 3.2, where expanding an empty
+          # array under set -u is an unbound-variable error rather than zero
+          # words. cmake_args is empty for every caller that does not set it,
+          # so the plain "${extra[@]}" this leg used to spell -- still correct
+          # on the bash 5 every other leg runs -- failed here before cmake was
+          # reached at all. The ${x[@]+...} form expands to nothing when the
+          # array is unset and to the same words when it is not.
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
-            "${extra[@]}"
+            ${extra[@]+"${extra[@]}"}
 
       - name: Build
         run: cmake --build build -v
