@@ -173,31 +173,6 @@ jobs:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
           key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
 
-      # /analyze:external- and /external:W0 keep the findings to code the
-      # caller owns. Without them every vcpkg and STL header is analyzed too,
-      # which is both the bulk of the runtime and none of the actionable
-      # results. /WX is what makes a finding mean something.
-      - name: Compose the analysis flags
-        shell: bash
-        env:
-          EXTRA: ${{ inputs.analyze_args }}
-          WERROR: ${{ inputs.warnings_as_errors }}
-        run: |
-          set -euo pipefail
-          # As above: a newline in analyze_args would set a second variable.
-          case "$EXTRA" in *$'\n'*)
-            echo "::error::analyze_args must be a single line"; exit 1 ;;
-          esac
-          flags="/analyze /analyze:external- /external:W0 /external:anglebrackets"
-          if [ "$WERROR" = "true" ]; then
-            flags="$flags /WX"
-          fi
-          if [ -n "$EXTRA" ]; then
-            flags="$flags $EXTRA"
-          fi
-          echo "Analysis flags: $flags"
-          echo "ANALYZE_FLAGS=$flags" >> "$GITHUB_ENV"
-
       # Every expression reaches the shell through env rather than being
       # substituted into the script, so a value carrying a quote or a
       # semicolon is an argument and not a command. read -ra for cmake_args
@@ -210,8 +185,20 @@ jobs:
           GENERATOR: ${{ matrix.generator }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          # Composed here rather than in a step that writes GITHUB_ENV: an
+          # expression in env: is passed to the process, never substituted
+          # into a script, so there is nothing to inject into. /analyze:external-
+          # and /external:W0 keep the findings to code the caller owns; without
+          # them every vcpkg and STL header is analyzed too, which is most of
+          # the runtime and none of the actionable results. /WX is what makes a
+          # finding mean something.
+          ANALYZE_FLAGS: >-
+            /analyze /analyze:external- /external:W0 /external:anglebrackets
+            ${{ inputs.warnings_as_errors && '/WX' || '' }}
+            ${{ inputs.analyze_args }}
         run: |
           set -euo pipefail
+          echo "Analysis flags: $ANALYZE_FLAGS"
           read -ra extra <<< "$EXTRA_CMAKE"
           cmake -S . -B build \
             -G "$GENERATOR" \
@@ -228,8 +215,20 @@ jobs:
           TOOLSET: ${{ steps.preview.outputs.toolset }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          # Composed here rather than in a step that writes GITHUB_ENV: an
+          # expression in env: is passed to the process, never substituted
+          # into a script, so there is nothing to inject into. /analyze:external-
+          # and /external:W0 keep the findings to code the caller owns; without
+          # them every vcpkg and STL header is analyzed too, which is most of
+          # the runtime and none of the actionable results. /WX is what makes a
+          # finding mean something.
+          ANALYZE_FLAGS: >-
+            /analyze /analyze:external- /external:W0 /external:anglebrackets
+            ${{ inputs.warnings_as_errors && '/WX' || '' }}
+            ${{ inputs.analyze_args }}
         run: |
           set -euo pipefail
+          echo "Analysis flags: $ANALYZE_FLAGS"
           read -ra extra <<< "$EXTRA_CMAKE"
           cmake -S . -B build \
             -G "$GENERATOR" \
