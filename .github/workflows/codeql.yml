@@ -135,6 +135,25 @@ jobs:
 
       # Debug rather than unset, so NDEBUG stays undefined on purpose: -DNDEBUG
       # rewrites every assert before the extractor, which runs front-end side.
+      #
+      # VCPKG_INSTALLED_DIR is moved out of the build tree, which is the one
+      # thing here that is about the analysis rather than the build. Manifest
+      # mode installs into <build>/vcpkg_installed by default, and that sits
+      # inside the checkout -- which is CodeQL's source root, and the rule for
+      # what gets reported. So every dependency header the extractor sees
+      # becomes a candidate, and Boost.Test duly filed one against the caller:
+      # an unterminated variadic call in report_assertion, real enough in its
+      # own terms and not the caller's to fix. libstdc++ files nothing for the
+      # same reason this now files nothing -- /usr/include is not under the
+      # root either.
+      #
+      # paths-ignore does not reach this. It applies to interpreted languages
+      # and to compiled ones analysed without building; this leg builds, and
+      # for a built analysis the exclusion has to come from the build itself.
+      #
+      # sanitizers.yml made the same call for the same dependency: instrument
+      # the code under test and nothing else, or the leg reports only on
+      # libraries the caller does not own.
       - name: Configure
         shell: bash
         env:
@@ -149,6 +168,7 @@ jobs:
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            -DVCPKG_INSTALLED_DIR="$RUNNER_TEMP/vcpkg_installed" \
             "${extra[@]}"
 
       - name: Build
