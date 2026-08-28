@@ -72,6 +72,8 @@ compiler family, since its legs are split between them:
     with:
       gcc_tiers: qualification,development
       clang_tiers: development
+      # Empty drops the ASan libc++ leg, for a library libc++ cannot build.
+      libcxx_tiers: ""
 ```
 
 ## Workflows
@@ -134,6 +136,14 @@ standard library would not link with it in any case.
 Leak detection is **on**: `ASAN_OPTIONS=detect_leaks=1` is set explicitly, so a
 repository that allocates gets the check rather than inheriting a suppression
 written for one that does not.
+
+The libc++ leg has its own `libcxx_tiers`, defaulting to the Clang ladder. A
+library can be perfectly sound and still not build against libc++ at all -- one
+missing C++23 range adaptor is enough -- and that is a fact about the standard
+library rather than about the sanitizer. Left in the Clang ladder, such a
+library reddens this workflow's gate permanently, which is worse than not
+running the leg: a gate that is always red reports nothing about the legs that
+were meant to be green. `libcxx_tiers: ""` drops it.
 
 UBSan runs under both compilers because the two implementations do not check
 the same set -- the first run of this workflow found signed overflow that GCC's

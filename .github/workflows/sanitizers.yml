@@ -23,6 +23,20 @@ on:
         type: string
         required: false
         default: stable,qualification,development
+      libcxx_tiers:
+        description: >
+          Comma-separated rungs for the ASan leg that swaps in libc++, which
+          is otherwise the Clang ladder. Its own input because a library can
+          be perfectly sound and still not build against libc++ at all -- a
+          missing C++23 range adaptor is enough -- and that is a fact about
+          the standard library, not about the sanitizer. Left in the Clang
+          ladder, one such library reddens this workflow's gate permanently,
+          which is worse than not running the leg: a gate that is always red
+          reports nothing about the legs that were meant to be green. Empty
+          drops the leg entirely, for exactly that case.
+        type: string
+        required: false
+        default: stable,qualification,development
       reduce_on_pr:
         description: >
           Whether a pull request runs the floor and ceiling alone. False, as
@@ -101,13 +115,36 @@ jobs:
           build_types: Debug
           reduce_on_pr: ${{ inputs.reduce_on_pr }}
 
+      # Skipped, not called with an empty list: the action errors on tiers it
+      # cannot fill, which is the right answer for a caller that named a rung
+      # and a deliberate no-op for a caller that named none.
+      - id: libcxx
+        if: inputs.libcxx_tiers != ''
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@0061e0a7dcc5197821232597043379f5a09cbff9
+        with:
+          mode: matrix
+          toolchain: clang
+          tiers: ${{ inputs.libcxx_tiers }}
+          build_types: Debug
+          reduce_on_pr: ${{ inputs.reduce_on_pr }}
+
       - id: cross
         shell: bash
         env:
           GCC_RUNGS: ${{ steps.gcc.outputs.matrix }}
           CLANG_RUNGS: ${{ steps.clang.outputs.matrix }}
+          LIBCXX_RUNGS: ${{ steps.libcxx.outputs.matrix }}
         run: |
           set -euo pipefail
+
+          # A skipped step has no outputs, so the empty case arrives as the
+          # empty string rather than as JSON. No rungs means the libc++ leg
+          # crosses with nothing and drops out below.
+          libcxx_rungs="${LIBCXX_RUNGS:-}"
+          if [ -z "$libcxx_rungs" ]; then
+            libcxx_rungs='{"include":[]}'
+            echo "::notice::libcxx_tiers is empty, dropping the ASan libc++ leg"
+          fi
 
           # Leak detection deliberately left on. A library that allocates
           # nothing has nothing to report, and the repositories that do
@@ -148,8 +185,11 @@ jobs:
             --argjson legs "$legs" \
             --argjson gcc "$GCC_RUNGS" \
             --argjson clang "$CLANG_RUNGS" \
+            --argjson libcxx "$libcxx_rungs" \
             '{include: [ $legs[] as $leg
-               | (if $leg.family == "gcc" then $gcc.include else $clang.include end)[] as $rung
+               | (if $leg.family == "gcc" then $gcc
+                  elif $leg.libcxx then $libcxx
+                  else $clang end).include[] as $rung
                | $leg + $rung ]}')
 
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
