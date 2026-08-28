@@ -168,13 +168,24 @@ jobs:
       - name: Configure
         if: matrix.preview_channel != 'true'
         shell: pwsh
-        run: >
-          cmake -S . -B build
-          -G "${{ matrix.generator }}" -A x64
-          -T "${{ inputs.toolset }}"
-          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
-          ${{ inputs.cmake_args }}
+        env:
+          GENERATOR: ${{ matrix.generator }}
+          TOOLSET: ${{ inputs.toolset }}
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+        run: |
+          # -split, then @extra: PowerShell would otherwise pass the whole
+          # string as one argument. Empty contributes no argument at all.
+          $extra = @()
+          if ($env:EXTRA_CMAKE) {
+            $extra = $env:EXTRA_CMAKE -split '\s+' | Where-Object { $_ }
+          }
+          cmake -S . -B build `
+            -G "${env:GENERATOR}" -A x64 `
+            -T "${env:TOOLSET}" `
+            "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=${env:TRIPLET}" `
+            @extra
 
       # CMake cannot be told "version=Preview", so the number the install
       # action discovered is spelled out here.
@@ -183,21 +194,35 @@ jobs:
         shell: pwsh
         env:
           PREVIEW_TOOLSET: ${{ steps.preview.outputs.toolset }}
-        run: >
-          cmake -S . -B build
-          -G "${{ matrix.generator }}" -A x64
-          -T "${{ inputs.preview_toolset_prefix }}version=$env:PREVIEW_TOOLSET,host=x64"
-          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
-          ${{ inputs.cmake_args }}
+          GENERATOR: ${{ matrix.generator }}
+          PREVIEW_PREFIX: ${{ inputs.preview_toolset_prefix }}
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+        run: |
+          # -split, then @extra: PowerShell would otherwise pass the whole
+          # string as one argument. Empty contributes no argument at all.
+          $extra = @()
+          if ($env:EXTRA_CMAKE) {
+            $extra = $env:EXTRA_CMAKE -split '\s+' | Where-Object { $_ }
+          }
+          cmake -S . -B build `
+            -G "${env:GENERATOR}" -A x64 `
+            -T "${env:PREVIEW_PREFIX}version=${env:PREVIEW_TOOLSET},host=x64" `
+            "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=${env:TRIPLET}" `
+            @extra
 
       - name: Build
         shell: pwsh
-        run: cmake --build build --config ${{ matrix.build_type }} -v
+        env:
+          BUILD_TYPE: ${{ matrix.build_type }}
+        run: cmake --build build --config "${env:BUILD_TYPE}" -v
 
       - name: Test
         shell: pwsh
-        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
+        env:
+          BUILD_TYPE: ${{ matrix.build_type }}
+        run: ctest --test-dir build -C "${env:BUILD_TYPE}" --output-on-failure
 
   # One check name that does not move, for branch protection to require.
   #

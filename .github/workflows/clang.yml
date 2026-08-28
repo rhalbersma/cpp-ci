@@ -154,16 +154,26 @@ jobs:
           key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
 
       - name: Configure
-        run: >
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          -DCMAKE_C_COMPILER="$TOOLCHAIN_CC"
-          -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
-          -DCMAKE_CXX_FLAGS="${{ matrix.cxxflags }} ${{ inputs.cxx_flags }}"
-          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
-          -DVCPKG_OVERLAY_TRIPLETS="${{ steps.overlay.outputs.triplets }}"
-          ${{ inputs.cmake_args }}
+        shell: bash
+        env:
+          BUILD_TYPE: ${{ matrix.build_type }}
+          MATRIX_CXXFLAGS: ${{ matrix.cxxflags }}
+          CXX_FLAGS: ${{ inputs.cxx_flags }}
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
+          OVERLAY_TRIPLETS: ${{ steps.overlay.outputs.triplets }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+        run: |
+          set -euo pipefail
+          read -ra extra <<< "$EXTRA_CMAKE"
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+            -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
+            -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
+            -DCMAKE_CXX_FLAGS="$MATRIX_CXXFLAGS $CXX_FLAGS" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
+            "${extra[@]}"
 
       - name: Build
         run: cmake --build build -v
