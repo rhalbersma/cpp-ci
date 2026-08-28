@@ -200,8 +200,15 @@ jobs:
     # Job level, so a caller's run never reaches it. github.workflow and
     # github.ref would name the caller inside a called workflow; the trailing
     # literal keeps this group distinct even so.
+    #
+    # The language belongs in the key. Without it both matrix legs derive the
+    # same string, and cancel-in-progress then makes them cancel each other:
+    # the first run of this job killed its own actions leg in the second it
+    # started, leaving only python. A group is per language so that a new push
+    # supersedes the previous run's leg for that language and nothing else.
     concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}-cpp-ci-codeql-self
+      group: >-
+        ${{ github.workflow }}-${{ github.ref }}-cpp-ci-codeql-self-${{ matrix.language }}
       cancel-in-progress: true
 
     # security-events to file the findings, actions to let the extractor read
