@@ -163,15 +163,26 @@ jobs:
       # instead, which deploys nothing and cannot race.
       - name: Configure
         if: steps.winlibs.outputs.found == 'true'
-        run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          -DCMAKE_C_COMPILER=gcc
-          -DCMAKE_CXX_COMPILER=g++
-          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
-          -DVCPKG_APPLOCAL_DEPS=OFF
-          ${{ inputs.cmake_args }}
+        shell: pwsh
+        env:
+          BUILD_TYPE: ${{ matrix.build_type }}
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+        run: |
+          # -split, then @extra: PowerShell would otherwise pass the whole
+          # string as one argument. Empty contributes no argument at all.
+          $extra = @()
+          if ($env:EXTRA_CMAKE) {
+            $extra = $env:EXTRA_CMAKE -split '\s+' | Where-Object { $_ }
+          }
+          cmake -S . -B build -G Ninja `
+            "-DCMAKE_BUILD_TYPE=${env:BUILD_TYPE}" `
+            -DCMAKE_C_COMPILER=gcc `
+            -DCMAKE_CXX_COMPILER=g++ `
+            "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=${env:TRIPLET}" `
+            -DVCPKG_APPLOCAL_DEPS=OFF `
+            @extra
 
       - name: Build
         if: steps.winlibs.outputs.found == 'true'
@@ -182,9 +193,12 @@ jobs:
       # on PATH.
       - name: Test
         if: steps.winlibs.outputs.found == 'true'
+        env:
+          BUILD_TYPE: ${{ matrix.build_type }}
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
         run: |
-          $bin = if ("${{ matrix.build_type }}" -eq "Debug") { "debug\bin" } else { "bin" }
-          $dlls = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg_installed\${{ inputs.vcpkg_triplet }}\$bin"
+          $bin = if ($env:BUILD_TYPE -eq "Debug") { "debug\bin" } else { "bin" }
+          $dlls = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg_installed\${env:TRIPLET}\$bin"
           if (-not (Test-Path $dlls)) { throw "No vcpkg bin directory at $dlls" }
           $env:PATH = "$dlls;$env:PATH"
           ctest --test-dir build --output-on-failure

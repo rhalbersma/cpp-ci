@@ -87,8 +87,10 @@ jobs:
 
       - name: Require the rung to be filled
         if: steps.toolchain.outputs.supported != 'true'
+        env:
+          TIER: ${{ inputs.tier }}
         run: |
-          echo "::error::clang has no ${{ inputs.tier }} rung"
+          echo "::error::clang has no $TIER rung"
           exit 1
 
       - name: Resolve the GCC supplying libstdc++
@@ -155,15 +157,21 @@ jobs:
       # Debug rather than unset, so NDEBUG stays undefined on purpose:
       # -DNDEBUG rewrites every assert before the AST, which these checks read.
       - name: Configure
-        run: >
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_COMPILER="$TOOLCHAIN_CC"
-          -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX"
-          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=${{ inputs.vcpkg_triplet }}
-          ${{ inputs.cmake_args }}
+        shell: bash
+        env:
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+        run: |
+          set -euo pipefail
+          read -ra extra <<< "$EXTRA_CMAKE"
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
+            -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            "${extra[@]}"
 
       # Read from the compile database rather than stated here. The header
       # pass below drives clang-tidy outside that database and so cannot

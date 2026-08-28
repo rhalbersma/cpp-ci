@@ -118,8 +118,10 @@ jobs:
 
       - name: Require the rung to be filled
         if: steps.toolchain.outputs.supported != 'true'
+        env:
+          TIER: ${{ inputs.gcc_tier }}
         run: |
-          echo "::error::gcc has no ${{ inputs.gcc_tier }} rung"
+          echo "::error::gcc has no $TIER rung"
           exit 1
 
       - name: Install GCC
