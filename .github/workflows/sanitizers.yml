@@ -270,11 +270,28 @@ jobs:
           LIBCXX_TRIPLET: ${{ inputs.vcpkg_libcxx_triplet }}
         run: |
           set -euo pipefail
+
+          # The three triplets reach GITHUB_ENV from inputs this workflow does
+          # not own, and the one it picks names a directory vcpkg installs
+          # into. Reduced to the characters a triplet is made of and then
+          # required to be unchanged, so a wrong value fails here rather than
+          # being quietly mangled into a working one. It is the reduced value
+          # that is written below, not the input it came from.
+          gcc_triplet=$(printf '%s' "$GCC_TRIPLET" | tr -cd '[:alnum:]._-')
+          clang_triplet=$(printf '%s' "$CLANG_TRIPLET" | tr -cd '[:alnum:]._-')
+          libcxx_triplet=$(printf '%s' "$LIBCXX_TRIPLET" | tr -cd '[:alnum:]._-')
+          if [ "$gcc_triplet" != "$GCC_TRIPLET" ] ||
+             [ "$clang_triplet" != "$CLANG_TRIPLET" ] ||
+             [ "$libcxx_triplet" != "$LIBCXX_TRIPLET" ]; then
+            echo "::error::the vcpkg triplet inputs must match [A-Za-z0-9._-]"
+            exit 1
+          fi
+
           if [ "$FAMILY" = "gcc" ]; then
             echo "TOOLCHAIN_CC=gcc-${VERSION}"      >> "$GITHUB_ENV"
             echo "TOOLCHAIN_CXX=g++-${VERSION}"     >> "$GITHUB_ENV"
             echo "VCPKG_GCC_VERSION=${VERSION}"     >> "$GITHUB_ENV"
-            echo "VCPKG_TRIPLET=${GCC_TRIPLET}"     >> "$GITHUB_ENV"
+            echo "VCPKG_TRIPLET=${gcc_triplet}"     >> "$GITHUB_ENV"
           else
             echo "TOOLCHAIN_CC=clang-${VERSION}"    >> "$GITHUB_ENV"
             echo "TOOLCHAIN_CXX=clang++-${VERSION}" >> "$GITHUB_ENV"
@@ -282,9 +299,9 @@ jobs:
             # selection has to outlive the install step.
             echo "VCPKG_CLANG_VERSION=${VERSION}"   >> "$GITHUB_ENV"
             if [ "$LIBCXX" = "true" ]; then
-              echo "VCPKG_TRIPLET=${LIBCXX_TRIPLET}" >> "$GITHUB_ENV"
+              echo "VCPKG_TRIPLET=${libcxx_triplet}" >> "$GITHUB_ENV"
             else
-              echo "VCPKG_TRIPLET=${CLANG_TRIPLET}"  >> "$GITHUB_ENV"
+              echo "VCPKG_TRIPLET=${clang_triplet}"  >> "$GITHUB_ENV"
               # The rung's own flags select a libstdc++ outside /usr. They are
               # for the legs that use one, and wrong for the libc++ leg, which
               # installs no GCC at all -- the same reasoning the Configure
