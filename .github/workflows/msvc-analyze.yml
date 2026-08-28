@@ -10,8 +10,8 @@ permissions:
 
 # No concurrency group; see gcc.yml. It belongs to the calling stub.
 
-# MSVC's static analyzer, in the role clang-tidy.yml fills for Clang: one rung,
-# one configuration, findings rather than a test result.
+# MSVC's static analyzer, in the role clang-tidy.yml fills for Clang: every
+# rung, one configuration, findings rather than a test result.
 #
 # The two are not interchangeable. clang-tidy never builds - it reads a compile
 # database and runs a separate binary - whereas /analyze is a compiler flag, so
@@ -24,16 +24,23 @@ permissions:
 on:
   workflow_call:
     inputs:
-      tier:
+      tiers:
         description: >
-          Rung supplying the analyzer. Its own input, like clang-tidy's: a
-          toolset gains and retires checks, so it changes the verdict on code
-          nobody touched. Defaults to qualification rather than stable because
-          the analyzer is only as useful as the dialect it can parse, and the
-          stable rung is the oldest one a caller still supports.
+          Comma-separated rungs supplying the analyzer, one leg each. Its own
+          input, like clang-tidy's: a toolset gains and retires checks, so it
+          changes the verdict on code nobody touched.
+
+          All three by default, matching clang-tidy.yml and the compiler
+          ladders. A caller whose visual-studio.yml legs are green on 2022,
+          2026 and 2026-Preview is claiming all three as buildable, and a
+          reader who builds with 2022 gets 2022's analyzer over their own
+          translation units. Checking one rung answered for one of them.
+
+          A caller that genuinely lacks a rung names the ones it has, the same
+          way it already does for the compiler ladder.
         type: string
         required: false
-        default: qualification
+        default: stable,qualification,development
       build_type:
         description: >
           One CMake configuration. Debug rather than Release, for the reason
@@ -82,15 +89,15 @@ jobs:
     outputs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
-      # Matrix mode for a single rung: the runner image and the generator are
-      # per-rung facts, and only this mode reports them. VS 2026 needs the
-      # newer image, so the leg has to carry its own runner.
+      # The runner image and the generator are per-rung facts, and matrix mode
+      # is what reports them: VS 2026 wants the newer image and VS 2022 the
+      # older one, so each leg carries its own runner.
       - id: ladder
         uses: rhalbersma/cpp-ci/.github/actions/toolchain@0061e0a7dcc5197821232597043379f5a09cbff9
         with:
           mode: matrix
           toolchain: msvc
-          tiers: ${{ inputs.tier }}
+          tiers: ${{ inputs.tiers }}
           build_types: ${{ inputs.build_type }}
           reduce_on_pr: "false"
 
