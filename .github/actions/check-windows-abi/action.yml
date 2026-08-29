@@ -1,0 +1,166 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Check Windows stack-ABI conformance
+description: >
+  Fail if any function accesses a stack slot with an alignment the Windows
+  x64 ABI does not guarantee.
+
+  Two modes. Given `objects`, it scans a project's own build tree, which is
+  where an instance of this bug actually lives. Given `compiler` and `flags`
+  instead, it compiles a corpus that puts wide vectors in stack frames and
+  asks the same question of the toolchain in the abstract.
+
+  The ABI promises 16 bytes. An aligned move against a 32-byte ymm or 64-byte
+  zmm register is therefore only correct if the function realigned the stack
+  itself first. GCC 15 and 16 on MinGW emitted the move without the
+  realignment, which faults whenever the slot lands on a 16-but-not-32
+  boundary - see rhalbersma/bit_set#54, where it cost four unexplained Debug
+  segfaults and three pull requests to find. Correct code does contain aligned
+  wide stack accesses, so the check is not "is there one" but "is there one
+  the function did not earn".
+
+inputs:
+  objects:
+    description: >
+      Object files or directories to scan instead of compiling the corpus.
+      Point this at a build tree to ask the question about what a project
+      actually built. Empty means corpus mode.
+    required: false
+    default: ""
+  compiler:
+    description: Compiler driver to invoke, e.g. g++ or clang-cl. Corpus mode only.
+    required: false
+    default: ""
+  flags:
+    description: >
+      Flags requesting the widest vectors the target offers, e.g.
+      "-march=native" for a GNU driver or "/arch:AVX2" for an MSVC one.
+      Corpus mode only.
+    required: false
+    default: ""
+  require_wide_stack:
+    description: >
+      Fail if nothing wider than 16 bytes reached a stack slot, because such a
+      run proves nothing. Right for the corpus, which exists to produce them.
+      A project built without wide vectors legitimately has none, so a scan
+      may want this off.
+    required: false
+    default: "true"
+  compile_only:
+    description: Flag that compiles without linking, "-c" or "/c".
+    required: false
+    default: "-c"
+  objdump:
+    description: >
+      Disassembler. GNU objdump and llvm-objdump are both understood; the
+      self-test proves it against the one actually present before any verdict
+      is trusted.
+    required: false
+    default: objdump
+  assembler:
+    description: Driver used to assemble the self-test fixture, GNU syntax.
+    required: false
+    default: cc
+
+runs:
+  using: composite
+  steps:
+    # The checker parses disassembly text, so an unrecognised format would make
+    # it match nothing and pass everything - a green check that checks nothing.
+    # Proving it against this runner's own disassembler first is what makes a
+    # pass meaningful. Both bugs found while writing it were of exactly this
+    # kind, and this fixture caught both.
+    - name: Prove the checker against this runner's disassembler
+      shell: bash
+      env:
+        OBJDUMP: ${{ inputs.objdump }}
+        ASSEMBLER: ${{ inputs.assembler }}
+      run: |
+        "${GITHUB_ACTION_PATH}/selftest.sh" "$OBJDUMP" "$ASSEMBLER"
+
+    # Without this a green result is ambiguous: a runner whose CPU has no AVX
+    # gives -march=native nothing wide to emit, and the check passes over
+    # nothing. Naming the resolved feature set makes that visible in the log.
+    - name: Report what the vector flags resolved to
+      if: inputs.objects == ''
+      shell: bash
+      env:
+        COMPILER: ${{ inputs.compiler }}
+        FLAGS: ${{ inputs.flags }}
+      run: |
+        set -uo pipefail
+        echo "requested: $FLAGS"
+        $COMPILER $FLAGS -dM -E - </dev/null 2>/dev/null \
+          | grep -E '__(AVX|AVX2|AVX512F|SSE4_2)__' | sort || \
+          echo "(no AVX/SSE4.2 feature macros: this target emits nothing wider than 16 bytes)"
+
+        # The other half of the question, and the one that says whether this is
+        # fixable at all on this target. A 32-byte aligned stack access is only
+        # correct if the frame can be aligned to 32, and -mstackrealign aligns
+        # to the *preferred* boundary rather than to whatever an instruction
+        # needs. So: will this compiler accept 2^5 = 32?
+        #
+        # mingw-w64 GCC 13 rejects it -- "not between 3 and 4" -- while Linux
+        # x86-64 accepts it. If that cap still holds here, then the compiler
+        # emits instructions requiring an alignment it refuses to let anyone
+        # ask for, and capping vector width is the only remedy available.
+        # Measured rather than assumed: the cap was only ever checked on 13.
+        for n in 4 5; do
+          if $COMPILER -mpreferred-stack-boundary=$n -c -o /dev/null -x c++ /dev/null 2>/dev/null; then
+            echo "-mpreferred-stack-boundary=$n: accepted (2^$n bytes)"
+          else
+            echo "-mpreferred-stack-boundary=$n: REJECTED"
+          fi
+        done
+
+    - name: Compile the probe corpus at maximum vector width
+      if: inputs.objects == ''
+      shell: bash
+      env:
+        COMPILER: ${{ inputs.compiler }}
+        FLAGS: ${{ inputs.flags }}
+        COMPILE_ONLY: ${{ inputs.compile_only }}
+      run: |
+        set -euo pipefail
+        mkdir -p "${RUNNER_TEMP}/abi"
+        # -O2 is where the wide registers come from; -O0 and -O1 are where
+        # bit_set faulted. Compiling all three costs a second and covers the
+        # allocator behaving differently at each.
+        for opt in 0 1 2; do
+          echo "::group::compile -O${opt}"
+          $COMPILER $FLAGS -O${opt} $COMPILE_ONLY \
+            -o "${RUNNER_TEMP}/abi/probe-O${opt}.o" \
+            "${GITHUB_ACTION_PATH}/probe.cpp"
+          echo "::endgroup::"
+        done
+
+    - name: Check for stack accesses the ABI does not guarantee
+      shell: bash
+      env:
+        OBJDUMP: ${{ inputs.objdump }}
+        OBJECTS: ${{ inputs.objects }}
+        REQUIRE_WIDE_STACK: ${{ inputs.require_wide_stack }}
+      run: |
+        set -euo pipefail
+        require=()
+        if [ "$REQUIRE_WIDE_STACK" = "true" ]; then require+=(--require-wide-stack); fi
+        if [ -n "$OBJECTS" ]; then
+          # Scan mode. A corpus cannot be relied on to provoke this bug: it
+          # depends on how the compiler chose to spill in deeply inlined code,
+          # and the corpus here draws `vmovdqu` from every MinGW rung while
+          # bit_set drew `vmovdqa` from two of them. Scanning what the project
+          # built asks about the code that will actually run.
+          # shellcheck disable=SC2086
+          exec python3 "${GITHUB_ACTION_PATH}/check_windows_abi.py" \
+            --objdump "$OBJDUMP" "${require[@]}" $OBJECTS
+        fi
+        # Corpus mode. --require-wide-stack fails a run in which nothing wide
+        # ever reached a stack slot, because such a run cannot have misaligned
+        # anything. Wide *registers* are not that evidence: the first corpus
+        # here had 44 of them and no stack traffic at all.
+        python3 "${GITHUB_ACTION_PATH}/check_windows_abi.py" \
+          --objdump "$OBJDUMP" "${require[@]}" \
+          "${RUNNER_TEMP}"/abi/probe-O*.o

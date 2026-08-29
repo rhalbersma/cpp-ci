@@ -79,6 +79,20 @@ jobs:
         with:
           category: "/language:${{ matrix.language }}"
 
+  # Reported, deliberately not gated. This one is different in kind from the
+  # legs above: it does not check cpp-ci, it checks the toolchains cpp-ci
+  # ships, and two of the three rungs fail it today -- GCC 15 and 16 emit a
+  # 32-byte aligned store into a frame the Windows ABI aligns to 16. That is
+  # the defect it was written for, so a red leg here is the check working.
+  #
+  # Putting it in the gate below would therefore pin self-check red until an
+  # upstream fix lands, which is the trade issue #26 exists to refuse: a gate
+  # that is always red reports nothing. Under #26's model this is an excused
+  # leg -- run, not counted, and alarming the day it goes green. Until that
+  # exists, running and reporting is the honest half of it.
+  windows-abi:
+    uses: ./.github/workflows/windows-abi.yml
+
   # One check name that does not move, for branch protection to require -- the
   # same role the "all" job has in gcc.yml and its siblings.
   #
