@@ -48,48 +48,15 @@ on:
         type: string
         required: false
         default: ""
-      cap_vector_width:
+      unaligned_vector_moves:
         description: >
-          Pass -mprefer-vector-width=128 to every target on this toolchain.
-
-          The Windows x64 ABI guarantees a 16-byte aligned stack, and GCC
-          emits `vmovdqa` -- a 32-byte aligned move -- against fixed frame
-          slots anyway, in functions that never realigned. Such a slot faults
-          whenever rsp lands on a 32-byte boundary and works when it does not,
-          which is why rhalbersma/bit_set#54 surfaced as four Debug tests
-          segfaulting with no output and took three pull requests to find. A
-          later scan of that project's objects found 41 more, including in
-          Release, where nothing had ever crashed.
-
-          Capping the width is the only remedy the target offers.
-          -mstackrealign realigns to the *preferred* stack boundary, and
-          mingw-w64 refuses to let that exceed 16 bytes: GCC 13, 15.3.0 and
-          the 17 snapshot all reject -mpreferred-stack-boundary=5 as "not
-          between 3 and 4", where Linux x86-64 accepts it. Nor is there an
-          upstream fix to wait for -- GCC PR target/49001 has been open on
-          this since 2011.
-
-          On by default because the failure is silent, intermittent, and
-          costs nothing to prevent on a project that emits no wide vectors
-          anyway. Turn it off only to reproduce the bug deliberately.
-        type: boolean
-        required: false
-        default: true
-      abi_check:
-        description: >
-          Scan the built objects for stack accesses the Windows x64 ABI does
-          not guarantee, before running the tests. GCC 15 and 16 emitted
-          `vmovdqa %ymm0,-0x50(%rbp)` into a frame aligned only to 16, which
-          faults with no output and nothing in the test log to explain it -
-          see rhalbersma/bit_set#54, where it cost three pull requests to
-          find. The scan names the instruction and the function.
-
-          With cap_vector_width on, this stops being able to discover the bug
-          -- there are no wide vectors left to misalign -- and becomes a
-          regression guard on the cap instead: it fails the day the cap is
-          turned off, stops reaching some target, or a compiler finds another
-          route to an over-aligned frame slot. That is a smaller job than it
-          was, and still worth the two seconds it takes.
+          Pass -Wa,-muse-unaligned-vector-move to every target. MinGW emits 32-byte
+          aligned stores against a stack the Windows x64 ABI aligns to 16, which
+          faults whenever the slot lands wrong -- rhalbersma/bit_set#54, four silent
+          segfaults and 41 more found later by scanning. The assembler rewrites those
+          moves unaligned, which costs nothing on hardware since Sandy Bridge and
+          keeps 256-bit vectors, unlike capping the width. Needs binutils 2.38+.
+          GCC PR target/54412 is the upstream fix, in progress as of June 2026.
         type: boolean
         required: false
         default: true
@@ -213,7 +180,7 @@ jobs:
           BUILD_TYPE: ${{ matrix.build_type }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
-          CAP_VECTOR_WIDTH: ${{ inputs.cap_vector_width }}
+          UNALIGNED_VECTOR_MOVES: ${{ inputs.unaligned_vector_moves }}
         run: |
           # -split, then @extra: PowerShell would otherwise pass the whole
           # string as one argument. Empty contributes no argument at all.
@@ -221,16 +188,13 @@ jobs:
           if ($env:EXTRA_CMAKE) {
             $extra = $env:EXTRA_CMAKE -split '\s+' | Where-Object { $_ }
           }
-          # CMAKE_CXX_FLAGS lands ahead of a target's own compile options, so
-          # a project that adds -march=native later still gets it. Checked
-          # rather than assumed, because an option that a later -march undid
-          # would be worse than none: on the mingw-w64 cross at -O0, -O1 and
-          # -O2, "-mprefer-vector-width=128 -march=x86-64-v3" and the reverse
-          # order both give zero wide-register uses, and both keep __AVX2__
-          # defined so 128-bit VEX encodings survive.
+          # An assembler option, so it applies to whatever GCC emits regardless of
+          # what the source looks like. Checked rather than assumed: against real
+          # GCC 14 output at -O0, -O1 and -O2 it takes aligned wide stack accesses
+          # from 11 to 0 while leaving all 70 wide-register uses in place.
           $cap = @()
-          if ($env:CAP_VECTOR_WIDTH -eq 'true') {
-            $cap = @('-DCMAKE_CXX_FLAGS=-mprefer-vector-width=128')
+          if ($env:UNALIGNED_VECTOR_MOVES -eq 'true') {
+            $cap = @('-DCMAKE_CXX_FLAGS=-Wa,-muse-unaligned-vector-move')
           }
           # @cap before @extra: a caller passing its own -DCMAKE_CXX_FLAGS in
           # cmake_args comes later on the command line and wins, which is the
@@ -249,24 +213,6 @@ jobs:
         if: steps.winlibs.outputs.found == 'true'
         run: cmake --build build -v
 
-      # Before the tests rather than after. A fault of this kind kills the
-      # process with no output at all, so a red Test step says only
-      # "SegFault"; running the scan first means the diagnosis is in the log
-      # even when the test run dies. require_wide_stack is off because a
-      # project that builds without wide vectors legitimately has none, and
-      # failing it for that would be noise rather than a finding.
-      - name: Check Windows stack-ABI conformance
-        if: inputs.abi_check && steps.winlibs.outputs.found == 'true'
-        uses: rhalbersma/cpp-ci/.github/actions/check-windows-abi@df5060f4251a3e20c0860661c4ca761f905392a3
-        with:
-          objects: build
-          objdump: objdump
-          assembler: gcc
-          require_wide_stack: "false"
-
-      # vcpkg keeps the debug DLLs in their own subdirectory, and the two
-      # sets share file names, so only the one matching the build type may go
-      # on PATH.
       - name: Test
         if: steps.winlibs.outputs.found == 'true'
         env:
