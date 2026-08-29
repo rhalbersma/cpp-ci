@@ -59,6 +59,21 @@ runs:
       run: |
         "${GITHUB_ACTION_PATH}/selftest.sh" "$OBJDUMP" "$ASSEMBLER"
 
+    # Without this a green result is ambiguous: a runner whose CPU has no AVX
+    # gives -march=native nothing wide to emit, and the check passes over
+    # nothing. Naming the resolved feature set makes that visible in the log.
+    - name: Report what the vector flags resolved to
+      shell: bash
+      env:
+        COMPILER: ${{ inputs.compiler }}
+        FLAGS: ${{ inputs.flags }}
+      run: |
+        set -uo pipefail
+        echo "requested: $FLAGS"
+        $COMPILER $FLAGS -dM -E - </dev/null 2>/dev/null \
+          | grep -E '__(AVX|AVX2|AVX512F|SSE4_2)__' | sort || \
+          echo "(no AVX/SSE4.2 feature macros: this target emits nothing wider than 16 bytes)"
+
     - name: Compile the probe corpus at maximum vector width
       shell: bash
       env:
@@ -85,6 +100,10 @@ runs:
         OBJDUMP: ${{ inputs.objdump }}
       run: |
         set -euo pipefail
+        # --require-wide fails a run that produced no wide vector at all.
+        # Such a run cannot have misaligned anything, so reporting it as a pass
+        # would claim the toolchain is sound on evidence that does not exist.
         python3 "${GITHUB_ACTION_PATH}/check_windows_abi.py" \
           --objdump "$OBJDUMP" \
+          --require-wide \
           "${RUNNER_TEMP}"/abi/probe-O*.o

@@ -50,8 +50,12 @@ def realign_width(imm):
 
 
 def scan(disassembly):
+    """Return (findings, stats). Stats matter as much as findings: a run that
+    produced no wide vectors at all has proven nothing, and must not be
+    reported as if the toolchain had passed something."""
     findings, func, aligned_to = [], '?', 0
     pending = []
+    stats = {'wide_uses': 0, 'aligned_wide_stack': 0, 'realigned_functions': 0}
     for line in disassembly.splitlines():
         header = FUNC.match(line.strip())
         if header:
@@ -59,39 +63,70 @@ def scan(disassembly):
             func, aligned_to, pending = header.group('name'), 0, []
             continue
         body = line.replace('\t', ' ')
+        if WIDE.search(body):
+            stats['wide_uses'] += 1
         r = REALIGN.search(body)
         if r:
-            aligned_to = max(aligned_to, realign_width(r.group('imm')))
+            width = realign_width(r.group('imm'))
+            if width and not aligned_to:
+                stats['realigned_functions'] += 1
+            aligned_to = max(aligned_to, width)
             continue
         m = ALIGNED.search(body)
         if m:
             args = m.group('args')
             w = WIDE.search(args)
             if w and STACK.search(args):
+                stats['aligned_wide_stack'] += 1
                 pending.append((WIDTH[w.group('cls')], body.strip()))
     findings.extend((func, w, t) for w, t in pending if w > aligned_to)
-    return findings
+    return findings, stats
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('objects', nargs='*')
     ap.add_argument('--objdump', default='objdump')
+    ap.add_argument('--require-wide', action='store_true',
+                    help='Fail if the corpus produced no vector wider than 16 '
+                         'bytes. Without one there is nothing to misalign, so a '
+                         'pass would say nothing about the toolchain - only that '
+                         'the compiler declined to vectorise.')
     args = ap.parse_args()
 
-    total = 0
-    sources = args.objects or ['-']
-    for src in sources:
+    findings = 0
+    totals = {'wide_uses': 0, 'aligned_wide_stack': 0, 'realigned_functions': 0}
+    for src in args.objects or ['-']:
         text = sys.stdin.read() if src == '-' else subprocess.run(
-            [args.objdump, '-d', src], capture_output=True, text=True, check=True).stdout
-        for func, width, insn in scan(text):
-            print(f'{src}: {func}: needs {width}-byte alignment, '
-                  f'stack guarantees 16 and this function did not realign:\n    {insn}')
-            total += 1
-    if total:
-        print(f'\n{total} over-aligned stack access(es) not covered by a stack '
-              f'realignment. These fault on Windows.', file=sys.stderr)
+            [args.objdump, '-d', src], capture_output=True, text=True,
+            check=True).stdout
+        hits, stats = scan(text)
+        for key in totals:
+            totals[key] += stats[key]
+        for func, width, insn in hits:
+            print(f'{src}: {func}: needs {width}-byte alignment, stack '
+                  f'guarantees 16 and this function did not realign:\n    {insn}')
+            findings += 1
+
+    # Always report what was seen. A silent pass cannot be told apart from a
+    # pass over nothing, and the difference is the whole value of the check.
+    print(f'wide-register uses: {totals["wide_uses"]}; '
+          f'aligned wide stack accesses: {totals["aligned_wide_stack"]}; '
+          f'functions that realigned: {totals["realigned_functions"]}')
+
+    if findings:
+        print(f'\n{findings} over-aligned stack access(es) not covered by a '
+              f'stack realignment. These fault on Windows.', file=sys.stderr)
         return 1
+
+    if args.require_wide and totals['wide_uses'] == 0:
+        print('\nThe corpus produced no vector wider than 16 bytes, so nothing '
+              'here could have been misaligned and this run proves nothing '
+              'about the toolchain. Either the target has no AVX (check what '
+              '-march=native resolved to) or the corpus no longer provokes this '
+              'compiler and needs a shape that does.', file=sys.stderr)
+        return 1
+
     return 0
 
 
