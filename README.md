@@ -21,9 +21,9 @@ caller moves up on its next pin bump.
 | GCC    | 15     | 16            | 17-SVN      |
 | Clang  | 22 (libstdc++ 15) | 23 (libstdc++ 16) | 24-SVN (libstdc++ 17-SVN) |
 
-Not every family fills every rung — Apple publishes no Clang trunk — so the
-resolver reports `supported=false` for an empty one rather than inventing a
-compiler.
+Not every family fills every rung — Apple publishes no Clang trunk, and WinLibs
+publishes no MinGW one — so the resolver reports `supported=false` for an empty
+one rather than inventing a compiler.
 
 ## Usage
 
