@@ -50,7 +50,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e8007c38ac9ad6aa7a98272500711db98045561e
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@7c4f9f4b8a21be65dcce49607a74586de0f76f29
         with:
           mode: matrix
           toolchain: mingw
@@ -73,7 +73,7 @@ jobs:
       # absent between release branches, and that is not a conformance failure.
       - name: Install the WinLibs toolchain
         id: winlibs
-        uses: rhalbersma/cpp-ci/.github/actions/install-winlibs@e8007c38ac9ad6aa7a98272500711db98045561e
+        uses: rhalbersma/cpp-ci/.github/actions/install-winlibs@7c4f9f4b8a21be65dcce49607a74586de0f76f29
         with:
           tag_prefix: ${{ matrix.tag_prefix }}
           snapshot: ${{ matrix.snapshot }}
@@ -88,7 +88,7 @@ jobs:
 
       - name: Check Windows stack-ABI conformance
         if: steps.winlibs.outputs.found == 'true'
-        uses: rhalbersma/cpp-ci/.github/actions/check-windows-abi@e8007c38ac9ad6aa7a98272500711db98045561e # first commit carrying it
+        uses: rhalbersma/cpp-ci/.github/actions/check-windows-abi@7c4f9f4b8a21be65dcce49607a74586de0f76f29 # first commit carrying it
         with:
           compiler: g++
           # -march=native is what a caller passes for a tuned build, and what
