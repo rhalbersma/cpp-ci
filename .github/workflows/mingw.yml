@@ -48,6 +48,33 @@ on:
         type: string
         required: false
         default: ""
+      cap_vector_width:
+        description: >
+          Pass -mprefer-vector-width=128 to every target on this toolchain.
+
+          The Windows x64 ABI guarantees a 16-byte aligned stack, and GCC
+          emits `vmovdqa` -- a 32-byte aligned move -- against fixed frame
+          slots anyway, in functions that never realigned. Such a slot faults
+          whenever rsp lands on a 32-byte boundary and works when it does not,
+          which is why rhalbersma/bit_set#54 surfaced as four Debug tests
+          segfaulting with no output and took three pull requests to find. A
+          later scan of that project's objects found 41 more, including in
+          Release, where nothing had ever crashed.
+
+          Capping the width is the only remedy the target offers.
+          -mstackrealign realigns to the *preferred* stack boundary, and
+          mingw-w64 refuses to let that exceed 16 bytes: GCC 13, 15.3.0 and
+          the 17 snapshot all reject -mpreferred-stack-boundary=5 as "not
+          between 3 and 4", where Linux x86-64 accepts it. Nor is there an
+          upstream fix to wait for -- GCC PR target/49001 has been open on
+          this since 2011.
+
+          On by default because the failure is silent, intermittent, and
+          costs nothing to prevent on a project that emits no wide vectors
+          anyway. Turn it off only to reproduce the bug deliberately.
+        type: boolean
+        required: false
+        default: true
       abi_check:
         description: >
           Scan the built objects for stack accesses the Windows x64 ABI does
@@ -56,6 +83,13 @@ on:
           faults with no output and nothing in the test log to explain it -
           see rhalbersma/bit_set#54, where it cost three pull requests to
           find. The scan names the instruction and the function.
+
+          With cap_vector_width on, this stops being able to discover the bug
+          -- there are no wide vectors left to misalign -- and becomes a
+          regression guard on the cap instead: it fails the day the cap is
+          turned off, stops reaching some target, or a compiler finds another
+          route to an over-aligned frame slot. That is a smaller job than it
+          was, and still worth the two seconds it takes.
         type: boolean
         required: false
         default: true
@@ -179,6 +213,7 @@ jobs:
           BUILD_TYPE: ${{ matrix.build_type }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          CAP_VECTOR_WIDTH: ${{ inputs.cap_vector_width }}
         run: |
           # -split, then @extra: PowerShell would otherwise pass the whole
           # string as one argument. Empty contributes no argument at all.
@@ -186,6 +221,20 @@ jobs:
           if ($env:EXTRA_CMAKE) {
             $extra = $env:EXTRA_CMAKE -split '\s+' | Where-Object { $_ }
           }
+          # CMAKE_CXX_FLAGS lands ahead of a target's own compile options, so
+          # a project that adds -march=native later still gets it. Checked
+          # rather than assumed, because an option that a later -march undid
+          # would be worse than none: on the mingw-w64 cross at -O0, -O1 and
+          # -O2, "-mprefer-vector-width=128 -march=x86-64-v3" and the reverse
+          # order both give zero wide-register uses, and both keep __AVX2__
+          # defined so 128-bit VEX encodings survive.
+          $cap = @()
+          if ($env:CAP_VECTOR_WIDTH -eq 'true') {
+            $cap = @('-DCMAKE_CXX_FLAGS=-mprefer-vector-width=128')
+          }
+          # @cap before @extra: a caller passing its own -DCMAKE_CXX_FLAGS in
+          # cmake_args comes later on the command line and wins, which is the
+          # right way round -- but it then owns this problem itself.
           cmake -S . -B build -G Ninja `
             "-DCMAKE_BUILD_TYPE=${env:BUILD_TYPE}" `
             -DCMAKE_C_COMPILER=gcc `
@@ -193,6 +242,7 @@ jobs:
             "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=${env:TRIPLET}" `
             -DVCPKG_APPLOCAL_DEPS=OFF `
+            @cap `
             @extra
 
       - name: Build
