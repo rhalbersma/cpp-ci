@@ -50,28 +50,13 @@ on:
         default: ""
       cap_vector_width:
         description: >
-          Pass -mprefer-vector-width=128 to every target on this toolchain.
-
-          The Windows x64 ABI guarantees a 16-byte aligned stack, and GCC
-          emits `vmovdqa` -- a 32-byte aligned move -- against fixed frame
-          slots anyway, in functions that never realigned. Such a slot faults
-          whenever rsp lands on a 32-byte boundary and works when it does not,
-          which is why rhalbersma/bit_set#54 surfaced as four Debug tests
-          segfaulting with no output and took three pull requests to find. A
-          later scan of that project's objects found 41 more, including in
-          Release, where nothing had ever crashed.
-
-          Capping the width is the only remedy the target offers.
-          -mstackrealign realigns to the *preferred* stack boundary, and
-          mingw-w64 refuses to let that exceed 16 bytes: GCC 13, 15.3.0 and
-          the 17 snapshot all reject -mpreferred-stack-boundary=5 as "not
-          between 3 and 4", where Linux x86-64 accepts it. Nor is there an
-          upstream fix to wait for -- GCC PR target/49001 has been open on
-          this since 2011.
-
-          On by default because the failure is silent, intermittent, and
-          costs nothing to prevent on a project that emits no wide vectors
-          anyway. Turn it off only to reproduce the bug deliberately.
+          Pass -mprefer-vector-width=128 to every target. MinGW emits 32-byte
+          aligned stores against a stack the Windows x64 ABI aligns to 16, which
+          faults whenever the slot lands wrong -- rhalbersma/bit_set#54, four
+          silent segfaults and 41 more found later by scanning. Capping the width
+          is the only remedy: mingw-w64 rejects -mpreferred-stack-boundary=5, so
+          the frame cannot be aligned to 32 at all, and GCC PR target/49001 has
+          been open since 2011. Off only to reproduce the bug deliberately.
         type: boolean
         required: false
         default: true
@@ -84,12 +69,9 @@ on:
           see rhalbersma/bit_set#54, where it cost three pull requests to
           find. The scan names the instruction and the function.
 
-          With cap_vector_width on, this stops being able to discover the bug
-          -- there are no wide vectors left to misalign -- and becomes a
-          regression guard on the cap instead: it fails the day the cap is
-          turned off, stops reaching some target, or a compiler finds another
-          route to an over-aligned frame slot. That is a smaller job than it
-          was, and still worth the two seconds it takes.
+          With cap_vector_width on there is nothing left to misalign, so this
+          becomes a regression guard on the cap rather than a way to discover
+          the bug.
         type: boolean
         required: false
         default: true
@@ -221,13 +203,9 @@ jobs:
           if ($env:EXTRA_CMAKE) {
             $extra = $env:EXTRA_CMAKE -split '\s+' | Where-Object { $_ }
           }
-          # CMAKE_CXX_FLAGS lands ahead of a target's own compile options, so
-          # a project that adds -march=native later still gets it. Checked
-          # rather than assumed, because an option that a later -march undid
-          # would be worse than none: on the mingw-w64 cross at -O0, -O1 and
-          # -O2, "-mprefer-vector-width=128 -march=x86-64-v3" and the reverse
-          # order both give zero wide-register uses, and both keep __AVX2__
-          # defined so 128-bit VEX encodings survive.
+          # CMAKE_CXX_FLAGS lands ahead of a target's own compile options.
+          # Checked rather than assumed: both orderings against -march=x86-64-v3
+          # give zero wide-register uses and keep __AVX2__ defined.
           $cap = @()
           if ($env:CAP_VECTOR_WIDTH -eq 'true') {
             $cap = @('-DCMAKE_CXX_FLAGS=-mprefer-vector-width=128')
