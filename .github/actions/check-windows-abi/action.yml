@@ -5,9 +5,13 @@
 
 name: Check Windows stack-ABI conformance
 description: >
-  Compile a corpus that puts wide vectors in stack frames, using the widest
-  vectors the toolchain offers, then fail if any function accesses a stack
-  slot with an alignment the Windows x64 ABI does not guarantee.
+  Fail if any function accesses a stack slot with an alignment the Windows
+  x64 ABI does not guarantee.
+
+  Two modes. Given `objects`, it scans a project's own build tree, which is
+  where an instance of this bug actually lives. Given `compiler` and `flags`
+  instead, it compiles a corpus that puts wide vectors in stack frames and
+  asks the same question of the toolchain in the abstract.
 
   The ABI promises 16 bytes. An aligned move against a 32-byte ymm or 64-byte
   zmm register is therefore only correct if the function realigned the stack
@@ -19,14 +23,32 @@ description: >
   the function did not earn".
 
 inputs:
+  objects:
+    description: >
+      Object files or directories to scan instead of compiling the corpus.
+      Point this at a build tree to ask the question about what a project
+      actually built. Empty means corpus mode.
+    required: false
+    default: ""
   compiler:
-    description: Compiler driver to invoke, e.g. g++ or clang-cl.
-    required: true
+    description: Compiler driver to invoke, e.g. g++ or clang-cl. Corpus mode only.
+    required: false
+    default: ""
   flags:
     description: >
       Flags requesting the widest vectors the target offers, e.g.
       "-march=native" for a GNU driver or "/arch:AVX2" for an MSVC one.
-    required: true
+      Corpus mode only.
+    required: false
+    default: ""
+  require_wide_stack:
+    description: >
+      Fail if nothing wider than 16 bytes reached a stack slot, because such a
+      run proves nothing. Right for the corpus, which exists to produce them.
+      A project built without wide vectors legitimately has none, so a scan
+      may want this off.
+    required: false
+    default: "true"
   compile_only:
     description: Flag that compiles without linking, "-c" or "/c".
     required: false
@@ -63,6 +85,7 @@ runs:
     # gives -march=native nothing wide to emit, and the check passes over
     # nothing. Naming the resolved feature set makes that visible in the log.
     - name: Report what the vector flags resolved to
+      if: inputs.objects == ''
       shell: bash
       env:
         COMPILER: ${{ inputs.compiler }}
@@ -75,6 +98,7 @@ runs:
           echo "(no AVX/SSE4.2 feature macros: this target emits nothing wider than 16 bytes)"
 
     - name: Compile the probe corpus at maximum vector width
+      if: inputs.objects == ''
       shell: bash
       env:
         COMPILER: ${{ inputs.compiler }}
@@ -98,14 +122,26 @@ runs:
       shell: bash
       env:
         OBJDUMP: ${{ inputs.objdump }}
+        OBJECTS: ${{ inputs.objects }}
+        REQUIRE_WIDE_STACK: ${{ inputs.require_wide_stack }}
       run: |
         set -euo pipefail
-        # --require-wide-stack fails a run in which nothing wide ever reached
-        # a stack slot. Such a run cannot have misaligned anything, so
-        # reporting it as a pass would claim the toolchain is sound on evidence
-        # that does not exist. Wide *registers* are not that evidence: the
-        # first corpus here had 44 of them and no stack traffic at all.
+        require=()
+        if [ "$REQUIRE_WIDE_STACK" = "true" ]; then require+=(--require-wide-stack); fi
+        if [ -n "$OBJECTS" ]; then
+          # Scan mode. A corpus cannot be relied on to provoke this bug: it
+          # depends on how the compiler chose to spill in deeply inlined code,
+          # and the corpus here draws `vmovdqu` from every MinGW rung while
+          # bit_set drew `vmovdqa` from two of them. Scanning what the project
+          # built asks about the code that will actually run.
+          # shellcheck disable=SC2086
+          exec python3 "${GITHUB_ACTION_PATH}/check_windows_abi.py" \
+            --objdump "$OBJDUMP" "${require[@]}" $OBJECTS
+        fi
+        # Corpus mode. --require-wide-stack fails a run in which nothing wide
+        # ever reached a stack slot, because such a run cannot have misaligned
+        # anything. Wide *registers* are not that evidence: the first corpus
+        # here had 44 of them and no stack traffic at all.
         python3 "${GITHUB_ACTION_PATH}/check_windows_abi.py" \
-          --objdump "$OBJDUMP" \
-          --require-wide-stack \
+          --objdump "$OBJDUMP" "${require[@]}" \
           "${RUNNER_TEMP}"/abi/probe-O*.o

@@ -16,9 +16,13 @@ on a 16-but-not-32 boundary.
 So the check is not "is there an aligned wide stack access" - correct code has
 those - but "is there one in a function that never realigned far enough".
 
-Reads `objdump -d` (AT&T syntax) on stdin or from named object files.
+Reads `objdump -d` (AT&T syntax) on stdin, or from named object files, or
+from directories walked for object files - which is how it is pointed at a
+project's own build tree.
 """
-import argparse, re, subprocess, sys
+import argparse, os, re, subprocess, sys
+
+OBJECT_SUFFIXES = ('.o', '.obj')
 
 FUNC    = re.compile(r'^[0-9a-f]+ <(?P<name>.+)>:$')
 # and $0xffffffffffffffe0,%rsp  /  and $-32,%rsp
@@ -91,9 +95,30 @@ def scan(disassembly):
     return findings, stats
 
 
+def expand(paths):
+    """Resolve directories to the object files under them, so the checker can
+    be pointed at a build tree. A synthetic corpus cannot be relied on to
+    provoke this bug - it depends on how a compiler chose to spill in deeply
+    inlined code - so scanning what a project actually built is the only way to
+    ask the question about that project."""
+    out = []
+    for path in paths:
+        if path == '-' or os.path.isfile(path):
+            out.append(path)
+        elif os.path.isdir(path):
+            for root, _, files in os.walk(path):
+                out.extend(os.path.join(root, f) for f in sorted(files)
+                           if f.endswith(OBJECT_SUFFIXES))
+        else:
+            out.append(path)                # let objdump report it
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('objects', nargs='*')
+    ap.add_argument('objects', nargs='*',
+                    help='Object files, or directories to walk for them. '
+                         '"-" reads disassembly from stdin.')
     ap.add_argument('--objdump', default='objdump')
     ap.add_argument('--require-wide-stack', action='store_true',
                     help='Fail if nothing wider than 16 bytes ever reached a '
@@ -107,7 +132,8 @@ def main():
     findings = 0
     totals = {'wide_uses': 0, 'wide_stack': 0,
               'aligned_wide_stack': 0, 'realigned_functions': 0}
-    for src in args.objects or ['-']:
+    sources = expand(args.objects) or ['-']
+    for src in sources:
         text = sys.stdin.read() if src == '-' else subprocess.run(
             [args.objdump, '-d', src], capture_output=True, text=True,
             check=True).stdout
@@ -121,7 +147,8 @@ def main():
 
     # Always report what was seen. A silent pass cannot be told apart from a
     # pass over nothing, and the difference is the whole value of the check.
-    print(f'wide-register uses: {totals["wide_uses"]}; '
+    print(f'objects scanned: {len(sources)}; '
+          f'wide-register uses: {totals["wide_uses"]}; '
           f'wide stack accesses: {totals["wide_stack"]}; '
           f'of those aligned: {totals["aligned_wide_stack"]}; '
           f'functions that realigned: {totals["realigned_functions"]}')
