@@ -79,7 +79,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@7c4f9f4b8a21be65dcce49607a74586de0f76f29
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
         with:
           mode: matrix
           toolchain: msvc
@@ -112,7 +112,7 @@ jobs:
       - name: Install the MSVC Preview toolset
         if: matrix.preview_channel == 'true'
         id: preview
-        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@7c4f9f4b8a21be65dcce49607a74586de0f76f29
+        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
 
       - name: Report toolchain versions
         shell: pwsh
@@ -149,7 +149,7 @@ jobs:
       # MSVC has been binary compatible across toolsets since VS 2015, so the
       # stable-built Boost links against the preview leg too.
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@7c4f9f4b8a21be65dcce49607a74586de0f76f29
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
 

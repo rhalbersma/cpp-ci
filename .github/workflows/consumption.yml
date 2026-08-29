@@ -107,11 +107,11 @@ jobs:
       # This repository's own actions by owner/repo@sha, not by ./ path: a
       # relative reference resolves against the caller's workspace, which
       # holds the caller's checkout and none of this.
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@7c4f9f4b8a21be65dcce49607a74586de0f76f29
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@7c4f9f4b8a21be65dcce49607a74586de0f76f29
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -125,7 +125,7 @@ jobs:
           exit 1
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@7c4f9f4b8a21be65dcce49607a74586de0f76f29
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
@@ -152,7 +152,7 @@ jobs:
       - name: Locate the overlay triplets
         if: inputs.vcpkg
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@7c4f9f4b8a21be65dcce49607a74586de0f76f29
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
 
       - name: Restore vcpkg binary cache
         if: inputs.vcpkg
@@ -165,7 +165,7 @@ jobs:
 
       - name: Install the dependencies
         if: inputs.vcpkg
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@7c4f9f4b8a21be65dcce49607a74586de0f76f29
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           overlay_triplets: ${{ steps.overlay.outputs.triplets }}
