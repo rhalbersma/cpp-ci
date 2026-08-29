@@ -1,0 +1,113 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Windows ABI
+
+# Toolchain conformance, not a project build. It compiles a corpus this
+# repository owns and asks one question of the generated code: does this
+# toolchain put a value on the stack with an alignment the Windows x64 ABI
+# does not guarantee?
+#
+# It exists because the answer was no. GCC 15 and 16 on MinGW emitted
+# `vmovdqa %ymm0,-0x50(%rbp)` - a 32-byte aligned store - into a frame the ABI
+# only aligns to 16, and every target landed on a 16-but-not-32 boundary. In
+# rhalbersma/bit_set#54 that surfaced as four Debug tests segfaulting with no
+# output, survived three pull requests of narrowing, and was invisible to the
+# tests because it has nothing to do with what the tests do: it lands wherever
+# the compiler happened to spill.
+#
+# Deliberately not built from a caller's sources. A caller that has already
+# worked around the bug - bit_set now passes -mprefer-vector-width=128 - would
+# suppress the very thing being looked for, and CMAKE_CXX_FLAGS cannot override
+# a target's own compile options anyway. Compiling a corpus at maximum width
+# asks whether the toolchain is sound, which is the question worth asking once
+# for every consumer rather than separately in each.
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      tiers:
+        description: Comma-separated rungs to run.
+        required: false
+        type: string
+        default: stable,qualification,development
+      reduce_on_pr:
+        description: Whether a pull_request event runs a reduced matrix.
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  ladder:
+    name: Resolve the ladder
+    runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.ladder.outputs.matrix }}
+    steps:
+      - id: ladder
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@07d3b114e014035a50623952f1fdd254abd1ae47
+        with:
+          mode: matrix
+          toolchain: mingw
+          tiers: ${{ inputs.tiers }}
+          # The generated code does not depend on the caller's build type: this
+          # corpus is compiled at both -O0 and -O2 by the action itself, which
+          # is the axis that matters here.
+          build_types: Release
+          reduce_on_pr: ${{ inputs.reduce_on_pr }}
+
+  mingw:
+    name: MinGW ${{ matrix.label }}
+    needs: ladder
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.ladder.outputs.legs) }}
+    steps:
+      # found=false, and the check below skips: a development snapshot can be
+      # absent between release branches, and that is not a conformance failure.
+      - name: Install the WinLibs toolchain
+        id: winlibs
+        uses: rhalbersma/cpp-ci/.github/actions/install-winlibs@07d3b114e014035a50623952f1fdd254abd1ae47
+        with:
+          tag_prefix: ${{ matrix.tag_prefix }}
+          snapshot: ${{ matrix.snapshot }}
+          token: ${{ github.token }}
+
+      - name: Report toolchain versions
+        if: steps.winlibs.outputs.found == 'true'
+        shell: bash
+        run: |
+          g++ --version | head -1
+          objdump --version | head -1
+
+      - name: Check Windows stack-ABI conformance
+        if: steps.winlibs.outputs.found == 'true'
+        uses: rhalbersma/cpp-ci/.github/actions/check-windows-abi@07d3b114e014035a50623952f1fdd254abd1ae47 # first commit carrying it
+        with:
+          compiler: g++
+          # -march=native is what a caller passes for a tuned build, and what
+          # made GCC reach for 256-bit vectors on the runners in the first
+          # place. Asking for less would not ask the question.
+          flags: -march=native -std=gnu++20
+          objdump: objdump
+          assembler: gcc
+
+  all:
+    name: all
+    needs: mingw
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless every leg succeeded
+        env:
+          RESULT: ${{ needs.mingw.result }}
+        run: |
+          set -euo pipefail
+          echo "legs: $RESULT"
+          test "$RESULT" = success

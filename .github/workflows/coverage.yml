@@ -62,11 +62,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@0061e0a7dcc5197821232597043379f5a09cbff9
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@07d3b114e014035a50623952f1fdd254abd1ae47
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@0061e0a7dcc5197821232597043379f5a09cbff9
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@07d3b114e014035a50623952f1fdd254abd1ae47
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -80,13 +80,13 @@ jobs:
           exit 1
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@0061e0a7dcc5197821232597043379f5a09cbff9
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@07d3b114e014035a50623952f1fdd254abd1ae47
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
 
       - name: Install gcovr
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@0061e0a7dcc5197821232597043379f5a09cbff9
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@07d3b114e014035a50623952f1fdd254abd1ae47
 
       - name: Name the toolchain
         env:
@@ -117,7 +117,7 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@0061e0a7dcc5197821232597043379f5a09cbff9
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@07d3b114e014035a50623952f1fdd254abd1ae47
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
 
