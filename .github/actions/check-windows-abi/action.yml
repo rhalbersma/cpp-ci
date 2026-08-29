@@ -97,6 +97,25 @@ runs:
           | grep -E '__(AVX|AVX2|AVX512F|SSE4_2)__' | sort || \
           echo "(no AVX/SSE4.2 feature macros: this target emits nothing wider than 16 bytes)"
 
+        # The other half of the question, and the one that says whether this is
+        # fixable at all on this target. A 32-byte aligned stack access is only
+        # correct if the frame can be aligned to 32, and -mstackrealign aligns
+        # to the *preferred* boundary rather than to whatever an instruction
+        # needs. So: will this compiler accept 2^5 = 32?
+        #
+        # mingw-w64 GCC 13 rejects it -- "not between 3 and 4" -- while Linux
+        # x86-64 accepts it. If that cap still holds here, then the compiler
+        # emits instructions requiring an alignment it refuses to let anyone
+        # ask for, and capping vector width is the only remedy available.
+        # Measured rather than assumed: the cap was only ever checked on 13.
+        for n in 4 5; do
+          if $COMPILER -mpreferred-stack-boundary=$n -c -o /dev/null -x c++ /dev/null 2>/dev/null; then
+            echo "-mpreferred-stack-boundary=$n: accepted (2^$n bytes)"
+          else
+            echo "-mpreferred-stack-boundary=$n: REJECTED"
+          fi
+        done
+
     - name: Compile the probe corpus at maximum vector width
       if: inputs.objects == ''
       shell: bash
