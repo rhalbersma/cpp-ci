@@ -49,9 +49,10 @@ inputs:
     default: "false"
 
 outputs:
-  # Not every family fills every rung: Apple publishes no Clang trunk, so
-  # apple-clang has no development. Callers read supported and skip, rather
-  # than failing on a rung that was never meant to exist.
+  # Not every family fills every rung: Apple publishes no Clang trunk and
+  # WinLibs publishes no MinGW one, so neither has a development. Callers
+  # read supported and skip, rather than failing on a rung that was never
+  # meant to exist.
   supported:
     description: Whether this family fills this rung, "true" or "false".
     value: ${{ steps.resolve.outputs.supported }}

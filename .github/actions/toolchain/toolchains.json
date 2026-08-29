@@ -86,12 +86,6 @@
       "os": "windows-2022",
       "tag_prefix": "16.",
       "snapshot": "false"
-    },
-    "development": {
-      "label": "17-SVN",
-      "os": "windows-2022",
-      "tag_prefix": "",
-      "snapshot": "true"
     }
   }
 }
