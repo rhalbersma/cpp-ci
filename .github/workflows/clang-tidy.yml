@@ -85,7 +85,7 @@ jobs:
       # building, and Debug is the configuration it is read from, for the
       # reason the Configure step gives.
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@818523471cd151a9cd48c2bf265c8ca2961e06ac
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e8007c38ac9ad6aa7a98272500711db98045561e
         with:
           mode: matrix
           toolchain: clang
@@ -107,11 +107,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@818523471cd151a9cd48c2bf265c8ca2961e06ac
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@e8007c38ac9ad6aa7a98272500711db98045561e
 
       - name: Resolve the GCC supplying libstdc++
         id: libstdcxx
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@818523471cd151a9cd48c2bf265c8ca2961e06ac
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e8007c38ac9ad6aa7a98272500711db98045561e
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -119,14 +119,14 @@ jobs:
       # A known-good libstdc++ for the standard library Clang compiles
       # against; the binaries are not wanted, only the headers.
       - name: Install the libstdc++
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@818523471cd151a9cd48c2bf265c8ca2961e06ac
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@e8007c38ac9ad6aa7a98272500711db98045561e
         with:
           version: ${{ steps.libstdcxx.outputs.version }}
           trunk: ${{ steps.libstdcxx.outputs.trunk }}
           symlink_binaries: "false"
 
       - name: Install Clang and clang-tidy
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@818523471cd151a9cd48c2bf265c8ca2961e06ac
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@e8007c38ac9ad6aa7a98272500711db98045561e
         with:
           version: ${{ matrix.version }}
           llvm_suffix: ${{ matrix.llvm_suffix }}
@@ -158,7 +158,7 @@ jobs:
       # Only so the test tree configures, and with it the compile database
       # below; clang-tidy itself never links anything.
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@818523471cd151a9cd48c2bf265c8ca2961e06ac
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e8007c38ac9ad6aa7a98272500711db98045561e
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
 
