@@ -67,7 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@e39ce4045d855e89f9f1e2475562b4ba7a38cf33
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
@@ -77,7 +77,7 @@ jobs:
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e39ce4045d855e89f9f1e2475562b4ba7a38cf33
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -93,7 +93,7 @@ jobs:
       # The image's default GCC is older than these libraries need; the
       # extractor reads whatever standard library the build does.
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@e39ce4045d855e89f9f1e2475562b4ba7a38cf33
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
@@ -117,7 +117,7 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@dd04cae60a19751fd730aaaa5dc6b2631d8b02f0
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e39ce4045d855e89f9f1e2475562b4ba7a38cf33
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
 
