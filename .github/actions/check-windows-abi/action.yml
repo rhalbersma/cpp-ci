@@ -1,0 +1,90 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Check Windows stack-ABI conformance
+description: >
+  Compile a corpus of ordinary aggregate copies with the widest vectors the
+  toolchain offers, then fail if any function accesses a stack slot with an
+  alignment the Windows x64 ABI does not guarantee.
+
+  The ABI promises 16 bytes. An aligned move against a 32-byte ymm or 64-byte
+  zmm register is therefore only correct if the function realigned the stack
+  itself first. GCC 15 and 16 on MinGW emitted the move without the
+  realignment, which faults whenever the slot lands on a 16-but-not-32
+  boundary - see rhalbersma/bit_set#54, where it cost four unexplained Debug
+  segfaults and three pull requests to find. Correct code does contain aligned
+  wide stack accesses, so the check is not "is there one" but "is there one
+  the function did not earn".
+
+inputs:
+  compiler:
+    description: Compiler driver to invoke, e.g. g++ or clang-cl.
+    required: true
+  flags:
+    description: >
+      Flags requesting the widest vectors the target offers, e.g.
+      "-march=native" for a GNU driver or "/arch:AVX2" for an MSVC one.
+    required: true
+  compile_only:
+    description: Flag that compiles without linking, "-c" or "/c".
+    required: false
+    default: "-c"
+  objdump:
+    description: >
+      Disassembler. GNU objdump and llvm-objdump are both understood; the
+      self-test proves it against the one actually present before any verdict
+      is trusted.
+    required: false
+    default: objdump
+  assembler:
+    description: Driver used to assemble the self-test fixture, GNU syntax.
+    required: false
+    default: cc
+
+runs:
+  using: composite
+  steps:
+    # The checker parses disassembly text, so an unrecognised format would make
+    # it match nothing and pass everything - a green check that checks nothing.
+    # Proving it against this runner's own disassembler first is what makes a
+    # pass meaningful. Both bugs found while writing it were of exactly this
+    # kind, and this fixture caught both.
+    - name: Prove the checker against this runner's disassembler
+      shell: bash
+      env:
+        OBJDUMP: ${{ inputs.objdump }}
+        ASSEMBLER: ${{ inputs.assembler }}
+      run: |
+        "${GITHUB_ACTION_PATH}/selftest.sh" "$OBJDUMP" "$ASSEMBLER"
+
+    - name: Compile the probe corpus at maximum vector width
+      shell: bash
+      env:
+        COMPILER: ${{ inputs.compiler }}
+        FLAGS: ${{ inputs.flags }}
+        COMPILE_ONLY: ${{ inputs.compile_only }}
+      run: |
+        set -euo pipefail
+        mkdir -p "${RUNNER_TEMP}/abi"
+        # Both configurations: -O0 spills every temporary to the stack, which is
+        # where the fault was found, and -O2 vectorises, which is where the wide
+        # registers come from in the first place.
+        for opt in 0 2; do
+          echo "::group::compile -O${opt}"
+          $COMPILER $FLAGS -O${opt} $COMPILE_ONLY \
+            -o "${RUNNER_TEMP}/abi/probe-O${opt}.o" \
+            "${GITHUB_ACTION_PATH}/probe.cpp"
+          echo "::endgroup::"
+        done
+
+    - name: Check for stack accesses the ABI does not guarantee
+      shell: bash
+      env:
+        OBJDUMP: ${{ inputs.objdump }}
+      run: |
+        set -euo pipefail
+        python3 "${GITHUB_ACTION_PATH}/check_windows_abi.py" \
+          --objdump "$OBJDUMP" \
+          "${RUNNER_TEMP}"/abi/probe-O*.o
