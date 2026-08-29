@@ -98,7 +98,7 @@ jobs:
       legs: ${{ steps.cross.outputs.matrix }}
     steps:
       - id: gcc
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@07d3b114e014035a50623952f1fdd254abd1ae47
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@818523471cd151a9cd48c2bf265c8ca2961e06ac
         with:
           mode: matrix
           toolchain: gcc
@@ -107,7 +107,7 @@ jobs:
           reduce_on_pr: ${{ inputs.reduce_on_pr }}
 
       - id: clang
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@07d3b114e014035a50623952f1fdd254abd1ae47
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@818523471cd151a9cd48c2bf265c8ca2961e06ac
         with:
           mode: matrix
           toolchain: clang
@@ -120,7 +120,7 @@ jobs:
       # and a deliberate no-op for a caller that named none.
       - id: libcxx
         if: inputs.libcxx_tiers != ''
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@07d3b114e014035a50623952f1fdd254abd1ae47
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@818523471cd151a9cd48c2bf265c8ca2961e06ac
         with:
           mode: matrix
           toolchain: clang
@@ -213,13 +213,13 @@ jobs:
       # relative reference resolves against the caller's workspace, which
       # holds the caller's checkout and none of this. The pin keeps a caller's
       # pinned workflow from silently pulling actions off a moving main.
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@07d3b114e014035a50623952f1fdd254abd1ae47
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@818523471cd151a9cd48c2bf265c8ca2961e06ac
 
       # On the Clang legs this is the paired libstdc++ rather than a compiler.
       # The libc++ leg skips it: libc++ replaces libstdc++, which is its point.
       - name: Install GCC
         if: matrix.libcxx != true
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@07d3b114e014035a50623952f1fdd254abd1ae47
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@818523471cd151a9cd48c2bf265c8ca2961e06ac
         with:
           version: ${{ matrix.family == 'gcc' && matrix.version || matrix.gcc_version }}
           trunk: ${{ matrix.family == 'gcc' && matrix.trunk || matrix.gcc_trunk }}
@@ -227,7 +227,7 @@ jobs:
 
       - name: Install Clang
         if: matrix.family == 'clang'
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@07d3b114e014035a50623952f1fdd254abd1ae47
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@818523471cd151a9cd48c2bf265c8ca2961e06ac
         with:
           version: ${{ matrix.version }}
           llvm_suffix: ${{ matrix.llvm_suffix }}
@@ -238,7 +238,7 @@ jobs:
       # test. See the naming step below for what went wrong without them.
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@07d3b114e014035a50623952f1fdd254abd1ae47
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@818523471cd151a9cd48c2bf265c8ca2961e06ac
 
       # Named once here rather than in every expression below, and the cache
       # key with them: it has to name the rung, or a tier change would restore
@@ -349,7 +349,7 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@07d3b114e014035a50623952f1fdd254abd1ae47
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@818523471cd151a9cd48c2bf265c8ca2961e06ac
         with:
           triplet: ${{ env.VCPKG_TRIPLET }}
           overlay_triplets: ${{ steps.overlay.outputs.triplets }}

@@ -93,7 +93,7 @@ jobs:
       # is what reports them: VS 2026 wants the newer image and VS 2022 the
       # older one, so each leg carries its own runner.
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@07d3b114e014035a50623952f1fdd254abd1ae47
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@818523471cd151a9cd48c2bf265c8ca2961e06ac
         with:
           mode: matrix
           toolchain: msvc
@@ -138,7 +138,7 @@ jobs:
       - name: Install the MSVC Preview toolset
         if: matrix.preview_channel == 'true'
         id: preview
-        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@07d3b114e014035a50623952f1fdd254abd1ae47
+        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@818523471cd151a9cd48c2bf265c8ca2961e06ac
 
       - name: Report toolchain versions
         shell: pwsh
@@ -171,7 +171,7 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@07d3b114e014035a50623952f1fdd254abd1ae47
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@818523471cd151a9cd48c2bf265c8ca2961e06ac
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
 
