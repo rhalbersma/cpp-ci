@@ -48,15 +48,15 @@ on:
         type: string
         required: false
         default: ""
-      cap_vector_width:
+      unaligned_vector_moves:
         description: >
-          Pass -mprefer-vector-width=128 to every target. MinGW emits 32-byte
+          Pass -Wa,-muse-unaligned-vector-move to every target. MinGW emits 32-byte
           aligned stores against a stack the Windows x64 ABI aligns to 16, which
-          faults whenever the slot lands wrong -- rhalbersma/bit_set#54, four
-          silent segfaults and 41 more found later by scanning. Capping the width
-          is the only remedy: mingw-w64 rejects -mpreferred-stack-boundary=5, so
-          the frame cannot be aligned to 32 at all, and GCC PR target/49001 has
-          been open since 2011. Off only to reproduce the bug deliberately.
+          faults whenever the slot lands wrong -- rhalbersma/bit_set#54, four silent
+          segfaults and 41 more found later by scanning. The assembler rewrites those
+          moves unaligned, which costs nothing on hardware since Sandy Bridge and
+          keeps 256-bit vectors, unlike capping the width. Needs binutils 2.38+.
+          GCC PR target/54412 is the upstream fix, in progress as of June 2026.
         type: boolean
         required: false
         default: true
@@ -69,9 +69,8 @@ on:
           see rhalbersma/bit_set#54, where it cost three pull requests to
           find. The scan names the instruction and the function.
 
-          With cap_vector_width on there is nothing left to misalign, so this
-          becomes a regression guard on the cap rather than a way to discover
-          the bug.
+          With unaligned_vector_moves on the aligned encodings are gone, so this
+          becomes a regression guard on that rather than a way to discover the bug.
         type: boolean
         required: false
         default: true
@@ -195,7 +194,7 @@ jobs:
           BUILD_TYPE: ${{ matrix.build_type }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
-          CAP_VECTOR_WIDTH: ${{ inputs.cap_vector_width }}
+          UNALIGNED_VECTOR_MOVES: ${{ inputs.unaligned_vector_moves }}
         run: |
           # -split, then @extra: PowerShell would otherwise pass the whole
           # string as one argument. Empty contributes no argument at all.
@@ -203,12 +202,13 @@ jobs:
           if ($env:EXTRA_CMAKE) {
             $extra = $env:EXTRA_CMAKE -split '\s+' | Where-Object { $_ }
           }
-          # CMAKE_CXX_FLAGS lands ahead of a target's own compile options.
-          # Checked rather than assumed: both orderings against -march=x86-64-v3
-          # give zero wide-register uses and keep __AVX2__ defined.
+          # An assembler option, so it applies to whatever GCC emits regardless of
+          # what the source looks like. Checked rather than assumed: against real
+          # GCC 14 output at -O0, -O1 and -O2 it takes aligned wide stack accesses
+          # from 11 to 0 while leaving all 70 wide-register uses in place.
           $cap = @()
-          if ($env:CAP_VECTOR_WIDTH -eq 'true') {
-            $cap = @('-DCMAKE_CXX_FLAGS=-mprefer-vector-width=128')
+          if ($env:UNALIGNED_VECTOR_MOVES -eq 'true') {
+            $cap = @('-DCMAKE_CXX_FLAGS=-Wa,-muse-unaligned-vector-move')
           }
           # @cap before @extra: a caller passing its own -DCMAKE_CXX_FLAGS in
           # cmake_args comes later on the command line and wins, which is the
