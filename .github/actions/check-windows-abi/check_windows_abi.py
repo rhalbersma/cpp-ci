@@ -55,7 +55,8 @@ def scan(disassembly):
     reported as if the toolchain had passed something."""
     findings, func, aligned_to = [], '?', 0
     pending = []
-    stats = {'wide_uses': 0, 'aligned_wide_stack': 0, 'realigned_functions': 0}
+    stats = {'wide_uses': 0, 'wide_stack': 0,
+             'aligned_wide_stack': 0, 'realigned_functions': 0}
     for line in disassembly.splitlines():
         header = FUNC.match(line.strip())
         if header:
@@ -65,6 +66,13 @@ def scan(disassembly):
         body = line.replace('\t', ' ')
         if WIDE.search(body):
             stats['wide_uses'] += 1
+            # Wide traffic against a frame slot, aligned or not. This is the
+            # liveness signal: a toolchain that renders these `vmovdqu` is
+            # sound by construction, and one that renders the same slots
+            # `vmovdqa` is the bug. Counting only the aligned ones cannot tell
+            # "sound" from "never got a wide value onto the stack at all".
+            if STACK.search(body):
+                stats['wide_stack'] += 1
         r = REALIGN.search(body)
         if r:
             width = realign_width(r.group('imm'))
@@ -87,15 +95,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('objects', nargs='*')
     ap.add_argument('--objdump', default='objdump')
-    ap.add_argument('--require-wide', action='store_true',
-                    help='Fail if the corpus produced no vector wider than 16 '
-                         'bytes. Without one there is nothing to misalign, so a '
-                         'pass would say nothing about the toolchain - only that '
-                         'the compiler declined to vectorise.')
+    ap.add_argument('--require-wide-stack', action='store_true',
+                    help='Fail if nothing wider than 16 bytes ever reached a '
+                         'stack slot. Wide registers alone are not enough: a '
+                         'value returned through a hidden pointer is stored in '
+                         'the caller\'s buffer and never occupies the callee '
+                         'frame, so a pass over such code says nothing about '
+                         'stack alignment.')
     args = ap.parse_args()
 
     findings = 0
-    totals = {'wide_uses': 0, 'aligned_wide_stack': 0, 'realigned_functions': 0}
+    totals = {'wide_uses': 0, 'wide_stack': 0,
+              'aligned_wide_stack': 0, 'realigned_functions': 0}
     for src in args.objects or ['-']:
         text = sys.stdin.read() if src == '-' else subprocess.run(
             [args.objdump, '-d', src], capture_output=True, text=True,
@@ -111,7 +122,8 @@ def main():
     # Always report what was seen. A silent pass cannot be told apart from a
     # pass over nothing, and the difference is the whole value of the check.
     print(f'wide-register uses: {totals["wide_uses"]}; '
-          f'aligned wide stack accesses: {totals["aligned_wide_stack"]}; '
+          f'wide stack accesses: {totals["wide_stack"]}; '
+          f'of those aligned: {totals["aligned_wide_stack"]}; '
           f'functions that realigned: {totals["realigned_functions"]}')
 
     if findings:
@@ -119,12 +131,14 @@ def main():
               f'stack realignment. These fault on Windows.', file=sys.stderr)
         return 1
 
-    if args.require_wide and totals['wide_uses'] == 0:
-        print('\nThe corpus produced no vector wider than 16 bytes, so nothing '
-              'here could have been misaligned and this run proves nothing '
-              'about the toolchain. Either the target has no AVX (check what '
-              '-march=native resolved to) or the corpus no longer provokes this '
-              'compiler and needs a shape that does.', file=sys.stderr)
+    if args.require_wide_stack and totals['wide_stack'] == 0:
+        print(f'\nNothing wider than 16 bytes reached a stack slot '
+              f'({totals["wide_uses"]} wide-register uses, none against the '
+              f'frame), so nothing here could have been misaligned and this run '
+              f'proves nothing about the toolchain. Either the target has no '
+              f'AVX - check what the vector flags resolved to - or the corpus '
+              f'no longer spills on this compiler and needs a shape that does.',
+              file=sys.stderr)
         return 1
 
     return 0

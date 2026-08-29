@@ -5,9 +5,9 @@
 
 name: Check Windows stack-ABI conformance
 description: >
-  Compile a corpus of ordinary aggregate copies with the widest vectors the
-  toolchain offers, then fail if any function accesses a stack slot with an
-  alignment the Windows x64 ABI does not guarantee.
+  Compile a corpus that puts wide vectors in stack frames, using the widest
+  vectors the toolchain offers, then fail if any function accesses a stack
+  slot with an alignment the Windows x64 ABI does not guarantee.
 
   The ABI promises 16 bytes. An aligned move against a 32-byte ymm or 64-byte
   zmm register is therefore only correct if the function realigned the stack
@@ -83,10 +83,10 @@ runs:
       run: |
         set -euo pipefail
         mkdir -p "${RUNNER_TEMP}/abi"
-        # Both configurations: -O0 spills every temporary to the stack, which is
-        # where the fault was found, and -O2 vectorises, which is where the wide
-        # registers come from in the first place.
-        for opt in 0 2; do
+        # -O2 is where the wide registers come from; -O0 and -O1 are where
+        # bit_set faulted. Compiling all three costs a second and covers the
+        # allocator behaving differently at each.
+        for opt in 0 1 2; do
           echo "::group::compile -O${opt}"
           $COMPILER $FLAGS -O${opt} $COMPILE_ONLY \
             -o "${RUNNER_TEMP}/abi/probe-O${opt}.o" \
@@ -100,10 +100,12 @@ runs:
         OBJDUMP: ${{ inputs.objdump }}
       run: |
         set -euo pipefail
-        # --require-wide fails a run that produced no wide vector at all.
-        # Such a run cannot have misaligned anything, so reporting it as a pass
-        # would claim the toolchain is sound on evidence that does not exist.
+        # --require-wide-stack fails a run in which nothing wide ever reached
+        # a stack slot. Such a run cannot have misaligned anything, so
+        # reporting it as a pass would claim the toolchain is sound on evidence
+        # that does not exist. Wide *registers* are not that evidence: the
+        # first corpus here had 44 of them and no stack traffic at all.
         python3 "${GITHUB_ACTION_PATH}/check_windows_abi.py" \
           --objdump "$OBJDUMP" \
-          --require-wide \
+          --require-wide-stack \
           "${RUNNER_TEMP}"/abi/probe-O*.o
