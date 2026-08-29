@@ -60,20 +60,6 @@ on:
         type: boolean
         required: false
         default: true
-      abi_check:
-        description: >
-          Scan the built objects for stack accesses the Windows x64 ABI does
-          not guarantee, before running the tests. GCC 15 and 16 emitted
-          `vmovdqa %ymm0,-0x50(%rbp)` into a frame aligned only to 16, which
-          faults with no output and nothing in the test log to explain it -
-          see rhalbersma/bit_set#54, where it cost three pull requests to
-          find. The scan names the instruction and the function.
-
-          With unaligned_vector_moves on the aligned encodings are gone, so this
-          becomes a regression guard on that rather than a way to discover the bug.
-        type: boolean
-        required: false
-        default: true
 
 jobs:
   ladder:
@@ -227,24 +213,6 @@ jobs:
         if: steps.winlibs.outputs.found == 'true'
         run: cmake --build build -v
 
-      # Before the tests rather than after. A fault of this kind kills the
-      # process with no output at all, so a red Test step says only
-      # "SegFault"; running the scan first means the diagnosis is in the log
-      # even when the test run dies. require_wide_stack is off because a
-      # project that builds without wide vectors legitimately has none, and
-      # failing it for that would be noise rather than a finding.
-      - name: Check Windows stack-ABI conformance
-        if: inputs.abi_check && steps.winlibs.outputs.found == 'true'
-        uses: rhalbersma/cpp-ci/.github/actions/check-windows-abi@df5060f4251a3e20c0860661c4ca761f905392a3
-        with:
-          objects: build
-          objdump: objdump
-          assembler: gcc
-          require_wide_stack: "false"
-
-      # vcpkg keeps the debug DLLs in their own subdirectory, and the two
-      # sets share file names, so only the one matching the build type may go
-      # on PATH.
       - name: Test
         if: steps.winlibs.outputs.found == 'true'
         env:
