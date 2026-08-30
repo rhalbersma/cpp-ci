@@ -161,6 +161,14 @@ jobs:
       # "= default;", and less the branches gcov synthesizes that no test can
       # take.
       #
+      # A line holding nothing but a closing brace is excluded for the same
+      # reason. It carries no code of the author's: what gcov records there is
+      # the unwind resume for a function with a local to destroy, reachable
+      # only if something inside throws. A test suite that passes never runs
+      # it, so every such function reads one line short of covered. Nothing
+      # hides behind the exclusion either - a function that is never called
+      # still has every line of its body counted.
+      #
       # --merge-lines because the question this gate asks is whether a line of
       # a template is ever run, not whether every emitted copy of it is. Without
       # it gcov's records stay per instantiation and per translation unit, so a
@@ -189,6 +197,7 @@ jobs:
             "${excludes[@]}" \
             --exclude-lines-by-pattern '^\s*assert\(' \
             --exclude-lines-by-pattern '=\s*default;' \
+            --exclude-lines-by-pattern '\s*\}\s*$' \
             --exclude-branches-by-pattern '^\s*assert\(' \
             --exclude-branches-by-pattern '^\s*.*=\s*default;' \
             --exclude-throw-branches \
