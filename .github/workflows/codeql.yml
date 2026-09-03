@@ -67,17 +67,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@676e6fb7abc784e54a227998bf3e9c39790e63cf
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@e2886b13f6fcd1eceb231652f816b016de41be1d
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           languages: ${{ inputs.languages }}
           queries: ${{ inputs.queries }}
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@676e6fb7abc784e54a227998bf3e9c39790e63cf
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e2886b13f6fcd1eceb231652f816b016de41be1d
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -93,7 +93,7 @@ jobs:
       # The image's default GCC is older than these libraries need; the
       # extractor reads whatever standard library the build does.
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@676e6fb7abc784e54a227998bf3e9c39790e63cf
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@e2886b13f6fcd1eceb231652f816b016de41be1d
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
@@ -117,7 +117,7 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@676e6fb7abc784e54a227998bf3e9c39790e63cf
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e2886b13f6fcd1eceb231652f816b016de41be1d
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
 
@@ -175,6 +175,6 @@ jobs:
         run: cmake --build build -v
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           category: "/language:${{ inputs.languages }}"

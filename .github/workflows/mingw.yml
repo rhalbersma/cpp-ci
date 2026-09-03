@@ -69,7 +69,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@676e6fb7abc784e54a227998bf3e9c39790e63cf
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e2886b13f6fcd1eceb231652f816b016de41be1d
         with:
           mode: matrix
           toolchain: mingw
@@ -95,7 +95,7 @@ jobs:
       # absent between release branches, and that is not this project's fault.
       - name: Install the WinLibs toolchain
         id: winlibs
-        uses: rhalbersma/cpp-ci/.github/actions/install-winlibs@676e6fb7abc784e54a227998bf3e9c39790e63cf
+        uses: rhalbersma/cpp-ci/.github/actions/install-winlibs@e2886b13f6fcd1eceb231652f816b016de41be1d
         with:
           tag_prefix: ${{ matrix.tag_prefix }}
           snapshot: ${{ matrix.snapshot }}
@@ -128,7 +128,7 @@ jobs:
 
       - name: Install the test dependencies
         if: steps.winlibs.outputs.found == 'true'
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@676e6fb7abc784e54a227998bf3e9c39790e63cf
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e2886b13f6fcd1eceb231652f816b016de41be1d
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
 
