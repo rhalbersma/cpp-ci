@@ -23,13 +23,19 @@ a change should survive before it merges.
 
 | Kind of check | What it establishes | Workflows |
 | :------------ | :------------------ | :-------- |
-| Unit testing | the library compiles, and its tests pass, on every rung named | the six [ladders](#unit-testing) |
-| Sanitizers | it does so with no undefined behaviour, bad access or leak | [`sanitizers.yml`](#sanitizersyml) |
-| Coverage | every line and branch is exercised | `coverage.yml` |
-| Static analysis | no finding from a linter or a security query suite | `clang-tidy.yml`, `msvc-analyze.yml`, `codeql.yml` |
-| Code formatting | the tree matches the caller's `.clang-format` | `clang-format.yml` |
-| Workflow checks | the Actions files are valid and the supply chain pinned | `actionlint.yml`, `scorecard.yml` |
-| Consumability | the installed package can actually be consumed | `consumption.yml` |
+| [Unit testing](#unit-testing) | the library compiles, and its tests pass, on every rung named | the six ladders |
+| [Coverage](#coverage) | every line and branch is exercised | `coverage.yml` |
+| [Sanitizers](#sanitizers) | it works with no undefined behaviour, bad access or leak | `sanitizers.yml` |
+| [Static analysis](#static-analysis) | no finding from a linter or a security query suite | `clang-tidy.yml`, `msvc-analyze.yml`, `codeql.yml` |
+| [Consumability](#consumability) | the installed package can actually be consumed | `consumption.yml` |
+| [Code formatting](#code-formatting) | the tree matches the caller's `.clang-format` | `clang-format.yml` |
+| [Workflow checks](#workflow-checks) | the Actions files are valid and the supply chain pinned | `actionlint.yml`, `scorecard.yml` |
+
+Those seven are in descending order of what a green check tells you about the
+library, and the groups are the point: the first two are the test suite and
+whether it is worth trusting, the next two are defects the tests do not assert
+on — at runtime, then without running — and the last three are the package, the
+source text, and this CI rather than the library at all.
 
 The rest of this file is in the order a caller needs it.
 [Dependencies](#dependencies) is what a caller has to declare and where,
@@ -56,7 +62,7 @@ file.
 
 Put the test-only dependencies behind a feature, with `default-features`
 naming it, so a tests-off configure does not need them. That is why
-[`consumption.yml`](#consumptionyml) defaults `vcpkg: false` — it configures
+[`consumption.yml`](#consumability) defaults `vcpkg: false` — it configures
 with `-DBUILD_TESTING=OFF`, which normally leaves a header-only library needing
 nothing at all. A library whose own headers `find_package(... REQUIRED)`
 something passes `vcpkg: true`.
@@ -243,7 +249,65 @@ workflow, so a group defined here would land in the caller's own group and
 cancel it. The stub knows whether it was reached by a push, a schedule, or a
 canary; these do not.
 
-### `sanitizers.yml`
+#### `visual-studio.yml`
+
+One workflow stubbed twice, once per toolset, which is what a caller's README
+shows as its separate `MSVC` and `Clang-CL` rows.
+
+| Stub job | `toolset` | `preview_toolset_prefix` | `cache_prefix` |
+| :------- | :-------- | :----------------------- | :------------- |
+| `msvc` | default, `host=x64` | default, empty | default, `msvc` |
+| `clang_cl` | `ClangCL,host=x64` | `"ClangCL,"` | `clang-cl` |
+
+Named for the toolchain rather than the compiler: MSVC's `cl` and the
+`clang-cl` each Visual Studio bundles are the same build in every respect but
+the `-T` argument, so they are one workflow with two callers rather than two
+files that would drift.
+
+```yaml
+  # msvc.yml -- no inputs; the defaults select the MSVC toolset.
+  msvc:
+    uses: rhalbersma/cpp-ci/.github/workflows/visual-studio.yml@<sha> # <version>
+
+  # clang-cl.yml -- the same ladder, clang-cl in front of the MSVC STL.
+  clang_cl:
+    uses: rhalbersma/cpp-ci/.github/workflows/visual-studio.yml@<sha> # <version>
+    with:
+      toolset: ClangCL,host=x64
+      preview_toolset_prefix: "ClangCL,"
+      # Its own cache: the two callers build the dependencies with different
+      # compilers.
+      cache_prefix: clang-cl
+```
+
+The two need separate caches because they build the dependencies with
+different compilers. The development rung here is a **preview channel of the
+same Visual Studio generation**, not a newer one, which is why the `msvc`
+ladder's qualification and development rungs share a label and a runner.
+`preview_toolset_prefix` is separate from `toolset` because that rung takes a
+`version=<n>` the released ones do not.
+
+### Coverage
+
+One job on one rung, running the test suite under `ctest` and then `gcovr`,
+with the bar as a hard gate rather than a report.
+
+| Measure | Default bar | Enforced by |
+| :------ | :---------- | :---------- |
+| Line coverage | `--fail-under-line 100` | [`coverage.yml`](.github/workflows/coverage.yml), gate `<job> / gcovr` |
+| Branch coverage | `--fail-under-branch 100` | the same job |
+| Project and patch | the caller's own `codecov.yml` | Codecov's `codecov/project` and `codecov/patch` |
+
+Both thresholds are inputs, so a caller ratcheting up from below 100 passes
+lower numbers rather than turning the gate off. `exclude` defaults to
+`test/.* build/.*`, keeping the report to the library's own headers.
+
+It sits on the stable `gcc` rung because what it measures is the code rather
+than the toolchain, and because `gcov` has to match the compiler that produced
+the data. Codecov's two checks, where a caller enables them, are that caller's
+configuration and not this repository's.
+
+### Sanitizers
 
 Five Linux legs, each building and running the caller's test suite in Debug on
 every rung its compiler fills — fifteen jobs by default, on every event.
@@ -301,85 +365,35 @@ to match), and **CFI** (no virtual dispatch). Linux-only
 by necessity: MSVC offers ASan alone, macOS has no LeakSanitizer, MinGW no
 usable runtime.
 
-### Analysis and quality
+### Static analysis
 
-The remaining eight, each answering one narrower question about the library
-rather than building a matrix of it.
+Three analyzers, one workflow each, and the two bound to a toolset run the
+whole ladder rather than one rung.
 
-| Workflow | What it runs | Default rungs | Gate |
-| :------- | :----------- | :------------ | :--- |
-| [`clang-tidy.yml`](.github/workflows/clang-tidy.yml) | The caller's `.clang-tidy` over the public headers, their per-header translation units and the test sources | all three `clang` | `<job> / all` |
-| [`msvc-analyze.yml`](.github/workflows/msvc-analyze.yml) | `/analyze`, in the role clang-tidy fills on the other side | all three `msvc` | `<job> / all` |
-| [`coverage.yml`](.github/workflows/coverage.yml) | `ctest`, then `gcovr` gated at `--fail-under-line 100 --fail-under-branch 100` | stable `gcc` | `<job> / gcovr` |
-| [`codeql.yml`](.github/workflows/codeql.yml) | The `c-cpp` `security-extended` query suite | stable `gcc` | `<job> / Analyze` |
-| [`consumption.yml`](#consumptionyml) | `find_package`, `add_subdirectory` and `FetchContent` against the installed package | stable `gcc` | `<job> / Consume` |
-| [`clang-format.yml`](.github/workflows/clang-format.yml) | `clang-format --dry-run --Werror` over `include` and `test` | stable `clang` | `<job> / clang-format` |
-| [`actionlint.yml`](.github/workflows/actionlint.yml) | Actions syntax and expressions over `.github/workflows/*.yml`; ShellCheck off unless asked for | — | `<job> / actionlint` |
-| [`scorecard.yml`](.github/workflows/scorecard.yml) | OpenSSF Scorecard, publishing the result the badge reads | — | none, see below |
+| Workflow | Analyzer | Default rungs | Gate |
+| :------- | :------- | :------------ | :--- |
+| [`clang-tidy.yml`](.github/workflows/clang-tidy.yml) | the caller's `.clang-tidy`, over the public headers, their per-header translation units and the test sources | all three `clang` | `<job> / all` |
+| [`msvc-analyze.yml`](.github/workflows/msvc-analyze.yml) | MSVC's `/analyze`, in the role clang-tidy fills on the other side | all three `msvc` | `<job> / all` |
+| [`codeql.yml`](.github/workflows/codeql.yml) | the `c-cpp` `security-extended` query suite | stable `gcc` | `<job> / Analyze` |
 
-A finding fails the run in every case: a check nobody has to act on stops being
-a check.
+A finding fails the run in every case — `WarningsAsErrors` on the clang-tidy
+side, `warnings_as_errors: true` by default on the MSVC side — because a check
+nobody has to act on stops being a check.
 
-Both analyzers run on **all three** rungs rather than one, for the reason the
-ladders do: a toolset gains, renames and retires checks, so it changes the
-verdict on code nobody touched. A caller whose compiler legs are green on three
-rungs is claiming all three as buildable, and a reader who builds with the
-newest runs *its* analyzer over their translation units. Both take Debug, since
+The two toolset analyzers run **all three** rungs for the reason the ladders
+do: a toolset gains, renames and retires checks, so it changes the verdict on
+code nobody touched. A caller whose compiler legs are green on three rungs is
+claiming all three as buildable, and a reader who builds with the newest runs
+*its* analyzer over their own translation units. Both take Debug, since
 `-DNDEBUG` rewrites every `assert` before the analyzer sees it.
 
-`clang-format.yml` takes its own rung, defaulting to **stable** and
-deliberately not following the compiler ladder: a formatter release reformats
-the code base, so moving it is a decision about the repository rather than
-about coverage, and a caller may well want it to lag. `coverage.yml` and
-`codeql.yml` sit on stable because what they measure is the code, not the
-toolchain.
+`codeql.yml` sits on stable because what it queries is the code rather than the
+toolchain; its extractor runs front-end side, so that rung is also the standard
+library the analysis sees. `clang-tidy.yml` configures a compile database and
+never builds the library, which is why it appears under that line in the table
+above.
 
-`scorecard.yml` cannot be a required check and is not meant to be: it runs on
-pushes to the default branch and on a schedule, never on a pull request.
-[`self-check.yml`](.github/workflows/self-check.yml) is this repository's own
-and not for callers to stub. Codecov, where a caller enables it, posts
-`codecov/project` and `codecov/patch` on its own; those are the caller's
-configuration, not this repository's.
-
-### `visual-studio.yml`
-
-One workflow stubbed twice, once per toolset, which is what a caller's README
-shows as its separate `MSVC` and `Clang-CL` rows.
-
-| Stub job | `toolset` | `preview_toolset_prefix` | `cache_prefix` |
-| :------- | :-------- | :----------------------- | :------------- |
-| `msvc` | default, `host=x64` | default, empty | default, `msvc` |
-| `clang_cl` | `ClangCL,host=x64` | `"ClangCL,"` | `clang-cl` |
-
-Named for the toolchain rather than the compiler: MSVC's `cl` and the
-`clang-cl` each Visual Studio bundles are the same build in every respect but
-the `-T` argument, so they are one workflow with two callers rather than two
-files that would drift.
-
-```yaml
-  # msvc.yml -- no inputs; the defaults select the MSVC toolset.
-  msvc:
-    uses: rhalbersma/cpp-ci/.github/workflows/visual-studio.yml@<sha> # <version>
-
-  # clang-cl.yml -- the same ladder, clang-cl in front of the MSVC STL.
-  clang_cl:
-    uses: rhalbersma/cpp-ci/.github/workflows/visual-studio.yml@<sha> # <version>
-    with:
-      toolset: ClangCL,host=x64
-      preview_toolset_prefix: "ClangCL,"
-      # Its own cache: the two callers build the dependencies with different
-      # compilers.
-      cache_prefix: clang-cl
-```
-
-The two need separate caches because they build the dependencies with
-different compilers. The development rung here is a **preview channel of the
-same Visual Studio generation**, not a newer one, which is why the `msvc`
-ladder's qualification and development rungs share a label and a runner.
-`preview_toolset_prefix` is separate from `toolset` because that rung takes a
-`version=<n>` the released ones do not.
-
-### `consumption.yml`
+### Consumability
 
 One job on one rung, building each consumption model the caller ships under
 `consumer_dir` (`test/consumer` by default) against the library configured with
@@ -434,7 +448,50 @@ none is configured against vcpkg's toolchain file, since manifest mode keys off
 the tree being configured and a dependency shipping its own `vcpkg.json` would
 install *that* repository's test dependencies here.
 
-### What a caller still documents
+### Code formatting
+
+One job on one rung, checking the tree against the caller's `.clang-format`
+without writing to it. The gate is `<job> / clang-format`.
+
+| Input | Default | What it selects |
+| :---- | :------ | :-------------- |
+| `tier` | `stable` | the Clang release supplying `clang-format` |
+| `paths` | `include test` | the roots searched |
+| `file_regex` | `.hpp` and `.cpp` | the files checked under them |
+
+`--dry-run --Werror` turns a reformatting diff into a failure rather than a
+patch, so the job reports and never rewrites the caller's tree. The default
+`file_regex` is a `find` pattern rather than a glob:
+
+```console
+.*\.\(hpp\|cpp\)
+```
+
+The rung is deliberately its own and lags on stable: a formatter release
+reformats the code base, so moving it is a decision about the repository rather
+than about coverage, and a caller may well want it to wait. A repository with
+no `.clang-format` can leave its stub dispatch-only — adopting a style is a
+separate decision from adopting this CI.
+
+### Workflow checks
+
+Two workflows whose subject is the CI itself rather than the library.
+
+| Workflow | What it checks | When it runs | Gate |
+| :------- | :------------- | :----------- | :--- |
+| [`actionlint.yml`](.github/workflows/actionlint.yml) | Actions syntax and expressions over `.github/workflows/*.yml` | every event | `<job> / actionlint` |
+| [`scorecard.yml`](.github/workflows/scorecard.yml) | OpenSSF Scorecard, publishing the result the badge reads | pushes to the default branch, and a schedule | none on a pull request |
+
+actionlint's ShellCheck pass is off unless asked for: `shellcheck` is empty by
+default, which keeps the job to Actions syntax and expressions and leaves shell
+policy to be managed on its own.
+
+`scorecard.yml` cannot be a required check and is not meant to be — it never
+runs on a pull request, so there is nothing for branch protection to wait on.
+[`self-check.yml`](.github/workflows/self-check.yml) is this repository's own
+and not for callers to stub.
+
+## What a caller still documents
 
 Everything above is this repository's to state; this is where the line falls.
 
@@ -451,7 +508,7 @@ branch-protection settings no shared workflow can carry, and inputs like the
 `dependency_repos` a consumption leg needs. Restating this repository's half
 instead is what lets several repositories disagree about the same CI.
 
-### Loosening and tightening the ladder
+## Loosening and tightening the ladder
 
 A caller is not bound to the ladder in either direction, and of the three ways
 its own requirements can depart from it, CI enforces exactly one.
