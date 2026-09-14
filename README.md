@@ -39,11 +39,19 @@ selected Visual Studio bundles: a runner-image fact, not something this
 repository pins, and the one number in a caller's matrix that this table cannot
 promise to keep current.
 
-The runner images are not uniform across the Windows rows, and the difference is
-load-bearing rather than an oversight. The `msvc` rungs move to `windows-2025`
-because that is the image carrying Visual Studio 18; `mingw` stays on
-`windows-2022` on every rung, because a WinLibs toolchain is a self-contained
-archive this CI downloads and the host image supplies nothing it needs.
+The runner images are not uniform across the Windows rows, and the two rows
+reach that state for different reasons. The `msvc` rungs are **tied** to their
+images: Visual Studio 18 ships on `windows-2025`, and VS 17 is why the stable
+rung stays on `windows-2022` — since June 2026 that is the only image carrying
+it, `windows-2025` and `windows-latest` having moved to VS 2026. `mingw` has no
+such tie, because a WinLibs toolchain is a self-contained archive this CI
+downloads and the image supplies only pwsh, the preinstalled vcpkg and Ninja,
+which both images have. Its rung is therefore a free choice rather than a
+constraint, and it currently sits on `windows-2022`, an image GitHub still
+maintains under its two-LTS policy. Moving it is a decision about what platform
+coverage is wanted, not a fix — as it stands, `windows-2022` is exercised by
+`mingw` and the stable `msvc`/Clang-CL rungs, and `windows-2025` by the other
+two MSVC rungs, so both images are under test either way.
 
 Both empty rungs above are the vendor's doing, and the resolver reports
 `supported=false` for one rather than inventing a compiler:
