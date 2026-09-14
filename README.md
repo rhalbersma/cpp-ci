@@ -400,22 +400,28 @@ library the analysis sees. `clang-tidy.yml` configures a compile database and
 never builds the library, which is why it appears under that line in the table
 above.
 
-`clang-tidy.yml` makes four passes, and only the two regexes are a caller's to
-name:
+`clang-tidy.yml` makes four passes, and three of them are named by a directory
+rather than a pattern — the same three a CMake project already has:
 
-| Pass | What it covers | Configured by |
-| :--- | :------------- | :------------ |
-| Public headers | the generated per-header translation units | `self_sufficiency_regex` |
-| Direct header dependencies | each header again as a primary input, so `misc-include-cleaner` can tell a direct include from a transitive one | `header_dir`, `header_exclude` |
-| Library sources | the library's own compiled sources | discovered |
-| Test sources | the test tree | `sources_regex` |
+| Pass | What it covers | Input | Default |
+| :--- | :------------- | :---- | :------ |
+| Generated per-header units | the self-sufficiency translation units the caller's CMake generates | `self_sufficiency_regex` | — |
+| Direct header dependencies | each header again as a primary input, so `misc-include-cleaner` can tell a direct include from a transitive one | `include_dir`, `include_exclude` | `include` |
+| Library sources | the library's own compiled sources | `source_dir` | `src` |
+| Test sources | the test tree | `test_dir` | `test` |
 
-The library-sources pass is discovered rather than configured: `library_source_dir`
-defaults to `src`, and the pass runs over whatever the compile database already
-holds under it. A library without that directory passes straight through with a
-line in the log, so nothing has to be opted out of; a library keeping its
-sources elsewhere names the directory, and `library_source_dir: ""` disables
-the pass.
+The three directory passes work the same way: the pass runs over whatever the
+compile database already holds under that directory. A directory that is not
+there prints a line and the pass is skipped, so a header-only library has
+nothing to opt out of; a library keeping its sources elsewhere names the
+directory; and `""` disables a pass outright.
+
+The first pass is the exception, and has to be. Those units are generated into
+the **build** tree, under a path only the caller's own CMake knows, so there is
+no convention to discover them by and the pattern stays a caller's to give.
+`sources_regex` is kept as an explicit override for the test pass, and
+`header_exclude` as an alias for `include_exclude`, so an existing stub keeps
+working; neither is needed in a new one.
 
 ### Consumability
 
