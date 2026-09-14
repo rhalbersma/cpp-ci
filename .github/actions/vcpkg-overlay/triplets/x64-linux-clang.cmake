@@ -5,10 +5,10 @@
 
 # x64-linux, but built with the Clang under test and the libstdc++ it is
 # paired with, instead of the runner image's default compiler. Used by the
-# Clang workflow so that vcpkg's Boost.Test and the tests of the project under test share one
+# Clang workflow so that vcpkg's ports and the project under test share one
 # standard library: the development leg compiles against the GCC trunk
-# snapshot's libstdc++, and mixing that with the system one breaks
-# Boost.Test at runtime.
+# snapshot's libstdc++, and mixing that with the system one breaks any
+# dependency that carries C++ across the boundary.
 set(VCPKG_TARGET_ARCHITECTURE x64)
 set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE static)

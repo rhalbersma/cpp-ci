@@ -52,7 +52,7 @@ on:
         description: >
           Pass -Wa,-muse-unaligned-vector-move to every target. MinGW emits 32-byte
           aligned stores against a stack the Windows x64 ABI aligns to 16, which
-          faults whenever the slot lands wrong -- rhalbersma/bit_set#54, four silent
+          faults whenever the slot lands wrong -- rhalbersma/xstd-bits#54, four silent
           segfaults and 41 more found later by scanning. The assembler rewrites those
           moves unaligned, which costs nothing on hardware since Sandy Bridge and
           keeps 256-bit vectors, unlike capping the width. Needs binutils 2.38+.
@@ -164,7 +164,7 @@ jobs:
 
       # Explicit: Ninja is single-config and vcpkg defaults to Debug, so the
       # build type has to be named for the Test step to put the matching
-      # Boost.Test DLL on PATH.
+      # dependency DLLs on PATH.
       #
       # VCPKG_APPLOCAL_DEPS=OFF, because the toolchain otherwise appends a
       # "vcpkg z-applocal" command to the link edge of every test executable.

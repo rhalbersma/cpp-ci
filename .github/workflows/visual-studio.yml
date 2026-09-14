@@ -146,8 +146,8 @@ jobs:
           key: ${{ env.VCPKG_CACHE_KEY }}
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
-      # MSVC has been binary compatible across toolsets since VS 2015, so the
-      # stable-built Boost links against the preview leg too.
+      # MSVC has been binary compatible across toolsets since VS 2015, so
+      # dependencies built on the stable leg link against the preview leg too.
       - name: Install the test dependencies
         uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e2886b13f6fcd1eceb231652f816b016de41be1d
         with:

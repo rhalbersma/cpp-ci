@@ -4,8 +4,8 @@
 #          http://www.boost.org/LICENSE_1_0.txt)
 
 # Chainloaded by the x64-linux-libcxx triplet: builds vcpkg ports with the
-# same Clang + libc++ combination the Clang-libc++ workflow uses for xstd
-# itself. The workflow supplies VCPKG_CLANG_VERSION for each matrix leg.
+# same Clang + libc++ combination the Clang-libc++ workflow uses for the
+# project under test. The workflow supplies VCPKG_CLANG_VERSION per leg.
 set(CMAKE_C_COMPILER "clang-$ENV{VCPKG_CLANG_VERSION}")
 set(CMAKE_CXX_COMPILER "clang++-$ENV{VCPKG_CLANG_VERSION}")
 set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++")
