@@ -352,14 +352,50 @@ the defaults are, and what the gate is called — everything above. A caller's
 README and CONTRIBUTING own the rest, and restating the tables above instead is
 what lets three repositories disagree about the same CI:
 
-- **Which families and rungs it asks for**, and where that is narrower than the
-  ladder, *why* — a library its own front end cannot compile on a released MSVC
-  is a fact about that library.
 - **Its badges and its required-check list**, both of which are per-repository
   URLs and branch-protection settings that no shared workflow can carry.
 - **Its repo-specific inputs**: the `clang-tidy` regexes, a `cxx_flags`
   workaround, a `libcxx_tiers: ""`, the `dependency_repos` a consumption leg
   needs.
+
+### Loosening and tightening the ladder
+
+A caller is not bound to the ladder in either direction. Its own requirements
+can sit below what the ladder runs or above it, and there are three ways to say
+so — of which CI enforces exactly one:
+
+| The caller's requirement | How it says so | Enforced by a leg |
+| :----------------------- | :------------- | :---------------- |
+| A baseline *below* the ladder | its README, verified by hand | no |
+| A rung it cannot use at all | `tiers:` names the rungs it can | **yes** |
+| A floor *inside* a rung | its README, verified by hand | no |
+
+**Looser.** The ladder runs current releases; a library's language baseline is
+usually older, and the earliest toolchain that builds it is older still.
+[xstd-misc](https://github.com/rhalbersma/xstd-misc) asks for C++20 and names
+GCC 10, Clang 11 and MSVC 19.29 (VS 2019 16.11) as the earliest known to compile
+it. No rung here is within five releases of those, so they are hand-verified
+claims the ladder neither checks nor contradicts, and its README says which is
+which.
+
+**Tighter, by dropping a rung.** Where the library genuinely does not build on
+a rung the vendor fills, the caller names the rungs it has and the gate covers
+those. [xstd-bits](https://github.com/rhalbersma/xstd-bits) runs no MSVC stable
+rung: its `bit_set_view` and `bit_span` are alias templates that the MSVC 17
+front end cannot deduce through, while MSVC 18 compiles them clean. Its Clang-CL
+row keeps the same VS 2022 rung and passes there, because what it dropped is one
+front end and not the image, the STL or the platform — which is the distinction
+the [tiers table](#tiers-not-versions) makes when it puts both on the `msvc`
+ladder.
+
+**Tighter, inside a rung.** A rung is a Visual Studio generation or a compiler
+major, and a caller may need more than its floor.
+[xstd-ints](https://github.com/rhalbersma/xstd-ints) writes its MSVC stable rung
+as `2022 (17.11+)`: the leg runs whichever 17.x the image carries, and the
+annotation records what the library actually needs. Nothing here takes a
+minor-version input — `version=<n>` selects the preview toolset build, not a
+floor — so a subversion is a documented requirement rather than something a leg
+verifies. A caller wanting it enforced has to drop the rung instead.
 
 ## Actions
 
