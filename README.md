@@ -4,9 +4,12 @@
 [![Actionlint](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml/badge.svg)](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/rhalbersma/cpp-ci/badge)](https://scorecard.dev/viewer/?uri=github.com/rhalbersma/cpp-ci)
 
-Shared GitHub Actions workflows for header-only C++ libraries tested with
-Boost.Test through a vcpkg manifest. Calling repositories keep a thin stub per
-workflow and no CI logic of their own.
+Shared GitHub Actions workflows for header-only C++ libraries whose test
+dependencies come from a `vcpkg.json` manifest and whose tests are registered
+with CTest. No test framework is named anywhere here — Boost.Test, Catch2 and
+GoogleTest all work, since a leg installs whatever the manifest declares and
+then runs `ctest`. Calling repositories keep a thin stub per workflow and no
+CI logic of their own.
 
 *Continuous integration* here is the broad sense: not unit testing alone, but
 every check a change should survive before it merges.
@@ -229,9 +232,9 @@ so a second compiler alone would re-run one check — but the container-overflow
 annotations are not shared: libc++ instruments `vector`, `string` and `deque`,
 while libstdc++ annotates `vector` alone and only under
 `_GLIBCXX_SANITIZE_VECTOR`. An overflow inside a `std::string` is invisible to
-the first leg and visible to the second. That leg rebuilds Boost.Test against
-libc++ through an overlay triplet, since a dependency built against the other
-standard library would not link with it in any case.
+the first leg and visible to the second. That leg rebuilds the manifest's
+dependencies against libc++ through an overlay triplet, since a test framework
+built against the other standard library would not link with it in any case.
 
 Leak detection is **on**: `ASAN_OPTIONS=detect_leaks=1` is set explicitly, so a
 repository that allocates gets the check rather than inheriting a suppression
@@ -255,9 +258,10 @@ design, so it runs with an ignorelist confining it to the code under test;
 without one it reports only on libstdc++.
 
 Deliberately absent: **TSan** (no threads), **MSan** (needs an instrumented
-libstdc++ *and* Boost.Test), **`-fsanitize=unsigned-integer-overflow`** (the
-wraparound is deliberate), **`_GLIBCXX_DEBUG`** (ABI-changing, so Boost.Test
-would need rebuilding to match), and **CFI** (no virtual dispatch). Linux-only
+libstdc++ *and* an instrumented test framework),
+**`-fsanitize=unsigned-integer-overflow`** (the wraparound is deliberate),
+**`_GLIBCXX_DEBUG`** (ABI-changing, so the test framework would need rebuilding
+to match), and **CFI** (no virtual dispatch). Linux-only
 by necessity: MSVC offers ASan alone, macOS has no LeakSanitizer, MinGW no
 usable runtime.
 
