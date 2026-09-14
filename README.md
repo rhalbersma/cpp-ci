@@ -24,11 +24,11 @@ pin bump it does not control.
 | Family | Platform | Standard library | Stable | Qualification | Development |
 | :----- | :------- | :--------------- | :----- | :------------ | :---------- |
 | `gcc` | Linux, `ubuntu-24.04` | libstdc++ | 15 | 16 | 17-SVN |
+| `mingw` | Windows, `windows-2022` | libstdc++ | 15 | 16 | — |
 | `clang` | Linux, `ubuntu-24.04` | libstdc++ | 22 (libstdc++ 15) | 23 (libstdc++ 16) | 24-SVN (libstdc++ 17-SVN) |
 | `clang` | Linux, `ubuntu-24.04` | libc++ | 22 | 23 | 24-SVN |
 | `apple-clang` | macOS | libc++ | Xcode 16.4, `macos-15` | Xcode 26.6, `macos-26` | — |
 | `msvc` | Windows | MSVC STL | 2022, `windows-2022` | 2026, `windows-2025` | 2026-Preview, `windows-2025` |
-| `mingw` | Windows, `windows-2022` | libstdc++ | 15 | 16 | — |
 
 The two `clang` rows are one ladder, not two: the same release, differing in
 `-stdlib=`, which is why `clang.yml` and `clang-libc++.yml` take the same rung
@@ -39,32 +39,21 @@ selected Visual Studio bundles: a runner-image fact, not something this
 repository pins, and the one number in a caller's matrix that this table cannot
 promise to keep current.
 
-The runner images are not uniform across the Windows rows, and the two rows
-reach that state for different reasons. The `msvc` rungs are **tied** to their
-images: Visual Studio 18 ships on `windows-2025`, and VS 17 is why the stable
-rung stays on `windows-2022` — since June 2026 that is the only image carrying
-it, `windows-2025` and `windows-latest` having moved to VS 2026. `mingw` has no
-such tie, because a WinLibs toolchain is a self-contained archive this CI
-downloads and the image supplies only pwsh, the preinstalled vcpkg and Ninja,
-which both images have. Its rung is therefore a free choice rather than a
-constraint, and it currently sits on `windows-2022`, an image GitHub still
-maintains under its two-LTS policy. Moving it is a decision about what platform
-coverage is wanted, not a fix — as it stands, `windows-2022` is exercised by
-`mingw` and the stable `msvc`/Clang-CL rungs, and `windows-2025` by the other
-two MSVC rungs, so both images are under test either way.
+The runner images are not uniform across the Windows rows. The `msvc` rungs are
+tied to theirs: Visual Studio 18 ships on `windows-2025` and VS 17 on
+`windows-2022`, so each rung sits on the image carrying its toolset. `mingw` has
+no such tie — a WinLibs toolchain is a self-contained archive this CI downloads,
+and the image supplies only pwsh, the preinstalled vcpkg and Ninja, which both
+images carry — so its image is a free choice, and it sits on `windows-2022`.
+Both images are under test either way: `windows-2022` carries `mingw` and the
+stable `msvc` and Clang-CL rungs, `windows-2025` the other two MSVC rungs.
 
-Both empty rungs above are the vendor's doing, and the resolver reports
-`supported=false` for one rather than inventing a compiler:
+Two rungs above are empty, and the resolver reports `supported=false` for one
+rather than inventing a compiler:
 
-- **`apple-clang` development** — Apple publishes no Clang trunk. That row has
-  had this shape since it was written.
-- **`mingw` development** — WinLibs publishes snapshots, but none newer than its
-  own releases and never a GCC 17 one. This rung *did* exist, labelled `17-SVN`,
-  and was dropped in [#33](https://github.com/rhalbersma/cpp-ci/pull/33) because
-  the label lied: it resolved to a February `16.0.1` snapshot, older than the
-  `16.2.0` on the qualification rung below it. A rung running a compiler older
-  than the one beneath it looks like coverage and is none, and it had already
-  caused a measurement to be reported against a toolchain it did not use.
+- **`apple-clang` development** — Apple publishes no Clang trunk.
+- **`mingw` development** — WinLibs publishes no snapshot newer than its own
+  releases, and none for GCC 17.
 
 Callers passing the default `stable,qualification,development` are unaffected by
 either: an absent rung is dropped with a notice. An empty rung is a fact about
@@ -129,50 +118,142 @@ without inputs. `Gate` is the check name to tick under branch protection, with
 `<job>` standing for the caller's own job id: a stub whose job is `clang_libcxx`
 reports `clang_libcxx / all`.
 
-### Building and testing
+Eight of these compile and run the caller's test suite, and those are the ones
+that say most: a ladder reports that the library builds and passes on a rung,
+and `sanitizers.yml` that it does so without undefined behaviour, a bad access
+or a leak. The rest answer narrower questions. What each one does with the test
+suite:
 
-Each of these resolves the requested rungs to a matrix, builds and runs the
-caller's test suite on every leg, and reports one gate whose name does not move
-as the ladder does.
+| The caller's test suite | Workflows |
+| :---------------------- | :-------- |
+| Configured, built and run under `ctest` | the six ladder workflows, `sanitizers.yml`, `coverage.yml` |
+| Configured and built, not run | `codeql.yml`, `msvc-analyze.yml` |
+| Configured off; a consumer built instead | `consumption.yml` |
+| Configured for a compile database only | `clang-tidy.yml` |
+| Not configured at all | `clang-format.yml`, `actionlint.yml`, `scorecard.yml` |
 
-| Workflow | Family | Default rungs | Legs per rung | Gate |
-| :------- | :----- | :------------ | :------------ | :--- |
-| [`gcc.yml`](.github/workflows/gcc.yml) | `gcc` | all three | Release, Debug | `<job> / all` |
-| [`clang.yml`](.github/workflows/clang.yml) | `clang`, paired libstdc++ | all three | Release, Debug | `<job> / all` |
-| [`clang-libc++.yml`](.github/workflows/clang-libc++.yml) | `clang`, libc++ | all three | Release, Debug | `<job> / all` |
-| [`apple-clang.yml`](.github/workflows/apple-clang.yml) | `apple-clang` | the two it fills | Release, Debug | `<job> / all` |
-| [`mingw.yml`](.github/workflows/mingw.yml) | `mingw` | the two it fills | Release, Debug | `<job> / all` |
-| [`visual-studio.yml`](.github/workflows/visual-studio.yml) | `msvc`, `-T` from the caller | all three | Release, Debug | `<job> / all` |
-| [`sanitizers.yml`](.github/workflows/sanitizers.yml) | `gcc` and `clang` | all three, per family | five legs, Debug | `<job> / all` |
-| [`consumption.yml`](.github/workflows/consumption.yml) | `gcc`, one rung | stable | one | `<job> / Consume` |
+### Unit testing
 
-`visual-studio.yml` is stubbed twice, as `msvc` and as `clang_cl`; see
-[below](#visual-studioyml). `sanitizers.yml` crosses its five legs with the
-ladder rather than pinning one release — fifteen jobs by default; see
-[below](#sanitizersyml).
+Seven rows over six workflows — Clang-CL and MSVC share one. Each resolves the
+requested rungs to a matrix, and every leg configures the caller's repository,
+builds it, and runs its test suite under `ctest`, so a green gate here means the
+library compiles *and* passes on every rung named, in both build types.
+
+| Compiler | Standard library | Workflow | Default rungs | Legs per rung | Gate |
+| :------- | :--------------- | :------- | :------------ | :------------ | :--- |
+| GCC | libstdc++ | [`gcc.yml`](.github/workflows/gcc.yml) | all three | Release, Debug | `<job> / all` |
+| MinGW | libstdc++ | [`mingw.yml`](.github/workflows/mingw.yml) | the two it fills | Release, Debug | `<job> / all` |
+| Clang | libstdc++ | [`clang.yml`](.github/workflows/clang.yml) | all three | Release, Debug | `<job> / all` |
+| Clang | libc++ | [`clang-libc++.yml`](.github/workflows/clang-libc++.yml) | all three | Release, Debug | `<job> / all` |
+| Apple Clang | libc++ | [`apple-clang.yml`](.github/workflows/apple-clang.yml) | the two it fills | Release, Debug | `<job> / all` |
+| Clang-CL | MSVC STL | [`visual-studio.yml`](.github/workflows/visual-studio.yml), `-T ClangCL` | all three | Release, Debug | `<job> / all` |
+| MSVC | MSVC STL | [`visual-studio.yml`](.github/workflows/visual-studio.yml) | all three | Release, Debug | `<job> / all` |
+
+The last two rows are the same workflow stubbed twice, once per toolset; see
+[below](#visual-studioyml).
+
+They share a shape: a first job resolves the requested rungs to a strategy
+matrix, a second builds and tests them, and a third gate reports one check name
+that does not move as the ladder does. The legs are named for compiler versions
+— `15 Debug`, `24-SVN Release` — and those names slide forward as the ladder
+does, which is why the gate a caller requires is `all` rather than any leg.
+
+Every rung runs on every event, **pull requests included**. `reduce_on_pr` opts
+a caller into running the floor and the ceiling in Debug alone on a pull request
+— the oldest compiler the code claims and the one that changes weekly — and
+defaults to `false` on every workflow that takes it. The cost of `true` is in
+the gate: it reports on the legs that ran, so a reduced pull request can go
+green having never compiled the middle rung, and a break there merges before the
+push that finds it. Pass it only where something else genuinely covers that
+rung.
+
+**Concurrency belongs to the caller.** None of these declare a concurrency
+group: inside a called workflow `github.workflow_ref` names the *calling*
+workflow, so a group defined here would land in the caller's own group and
+cancel it. The stub knows whether it was reached by a push, a schedule, or a
+canary; these do not.
+
+### `sanitizers.yml`
+
+Five Linux legs, each building and running the caller's test suite in Debug, and
+each run on every rung its compiler fills — fifteen jobs by default, on every
+event. The legs cross the ladder rather than pinning one release, because a
+sanitizer's instrumentation is no more fixed across releases than across
+compilers: what a run reports depends on the toolchain doing the instrumenting.
+
+| Leg | Compiler | Flags |
+| :-- | :------- | :---- |
+| ASan + LSan | GCC | `-fsanitize=address -fno-omit-frame-pointer` |
+| ASan + LSan | Clang, libc++ | the same, plus `-stdlib=libc++` |
+| UBSan | GCC | `-fsanitize=undefined -fno-sanitize-recover=undefined` |
+| UBSan | Clang | `-fsanitize=undefined -fno-sanitize-recover=undefined` |
+| Implicit conversion | Clang | `-fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion` |
+
+It takes one rung list per compiler family, since the legs are split between
+them: `gcc_tiers`, `clang_tiers`, and `libcxx_tiers` for the ASan libc++ leg.
+The gate is `<job> / all`.
+
+ASan runs against both standard libraries. Its detection is a shared runtime, so
+a second compiler alone would re-run one check — but the container-overflow
+annotations are not shared: libc++ instruments `vector`, `string` and `deque`,
+while libstdc++ annotates `vector` alone and only under
+`_GLIBCXX_SANITIZE_VECTOR`. An overflow inside a `std::string` is invisible to
+the first leg and visible to the second. That leg rebuilds Boost.Test against
+libc++ through an overlay triplet, since a dependency built against the other
+standard library would not link with it in any case.
+
+Leak detection is **on**: `ASAN_OPTIONS=detect_leaks=1` is set explicitly, so a
+repository that allocates gets the check rather than inheriting a suppression
+written for one that does not.
+
+The libc++ leg has its own `libcxx_tiers`, defaulting to the Clang ladder. A
+library can be perfectly sound and still not build against libc++ at all — one
+missing range adaptor is enough — and that is a fact about the standard library
+rather than about the sanitizer. Left in the Clang ladder, such a library
+reddens this workflow's gate permanently, which is worse than not running the
+leg: a gate that is always red reports nothing about the legs that were meant to
+be green. `libcxx_tiers: ""` drops it.
+
+UBSan runs under both compilers because the two implementations do not check the
+same set, so a clean run under one says nothing about the other.
+`-fsanitize=implicit-conversion` is Clang's alone (`g++` rejects the group) and
+catches the value-dependent truncations and sign changes that `-Wconversion` can
+only diagnose where it proves them statically. That group also fires on
+well-defined but lossy conversions, which a standard library is full of by
+design, so it runs with an ignorelist confining it to the code under test;
+without one it reports only on libstdc++.
+
+Deliberately absent: **TSan** (no threads), **MSan** (needs an instrumented
+libstdc++ *and* Boost.Test), **`-fsanitize=unsigned-integer-overflow`** (the
+wraparound is deliberate), **`_GLIBCXX_DEBUG`** (ABI-changing, so Boost.Test
+would need rebuilding to match), and **CFI** (no virtual dispatch). Linux-only
+by necessity: MSVC offers ASan alone, macOS has no LeakSanitizer, MinGW no
+usable runtime.
 
 ### Analysis and quality
 
-These do not build a matrix of the library; each answers one question about it.
-A finding fails the run in every case: a check nobody has to act on stops being
-a check.
+These answer one narrower question each, and a finding fails the run in every
+case: a check nobody has to act on stops being a check. Only `coverage.yml` runs
+the test suite; the others build it, configure it, or neither, per the table
+above.
 
 | Workflow | What it runs | Default rungs | Gate |
 | :------- | :----------- | :------------ | :--- |
-| [`clang-tidy.yml`](.github/workflows/clang-tidy.yml) | The caller's `.clang-tidy` over the public headers, their per-header translation units and the test sources, in Debug | all three `clang` | `<job> / all` |
-| [`msvc-analyze.yml`](.github/workflows/msvc-analyze.yml) | `/analyze` in the role clang-tidy fills on the other side, in Debug | all three `msvc` | `<job> / all` |
-| [`coverage.yml`](.github/workflows/coverage.yml) | `gcovr`, gated at `--fail-under-line 100 --fail-under-branch 100` | stable `gcc` | `<job> / gcovr` |
+| [`clang-tidy.yml`](.github/workflows/clang-tidy.yml) | The caller's `.clang-tidy` over the public headers, their per-header translation units and the test sources | all three `clang` | `<job> / all` |
+| [`msvc-analyze.yml`](.github/workflows/msvc-analyze.yml) | `/analyze`, in the role clang-tidy fills on the other side | all three `msvc` | `<job> / all` |
+| [`coverage.yml`](.github/workflows/coverage.yml) | `ctest`, then `gcovr` gated at `--fail-under-line 100 --fail-under-branch 100` | stable `gcc` | `<job> / gcovr` |
 | [`codeql.yml`](.github/workflows/codeql.yml) | The `c-cpp` `security-extended` query suite | stable `gcc` | `<job> / Analyze` |
+| [`consumption.yml`](.github/workflows/consumption.yml) | `find_package`, `add_subdirectory` and `FetchContent` against the installed package | stable `gcc` | `<job> / Consume` |
 | [`clang-format.yml`](.github/workflows/clang-format.yml) | `clang-format --dry-run --Werror` over `include` and `test` | stable `clang` | `<job> / clang-format` |
 | [`actionlint.yml`](.github/workflows/actionlint.yml) | Actions syntax and expressions over `.github/workflows/*.yml`; ShellCheck off unless asked for | — | `<job> / actionlint` |
 | [`scorecard.yml`](.github/workflows/scorecard.yml) | OpenSSF Scorecard, publishing the result the badge reads | — | none, see below |
 
-Both analyzers default to **all three** rungs rather than one, for the reason
-the ladders do: a toolset gains, renames and retires checks, so it changes the
+Both analyzers run on **all three** rungs rather than one, for the reason the
+ladders do: a toolset gains, renames and retires checks, so it changes the
 verdict on code nobody touched. A caller whose compiler legs are green on three
 rungs is claiming all three as buildable, and a reader who builds with the
-newest runs *its* analyzer over their translation units. Checking one rung
-answered for one of them.
+newest runs *its* analyzer over their translation units. Both take Debug, since
+`-DNDEBUG` rewrites every `assert` before the analyzer sees it.
 
 `clang-format.yml` takes its own rung, defaulting to **stable** and deliberately
 not following the compiler ladder: a formatter release reformats the code base,
@@ -187,44 +268,6 @@ and not for callers to stub.
 
 Codecov, where a caller enables it, posts `codecov/project` and `codecov/patch`
 on its own. Those are the caller's configuration, not this repository's.
-
-### What a caller still documents
-
-This repository owns what a rung resolves to, which legs a workflow runs, what
-the defaults are, and what the gate is called — everything above. A caller's
-README and CONTRIBUTING own the rest, and restating the tables above instead is
-what lets three repositories disagree about the same CI:
-
-- **Which families and rungs it asks for**, and where that is narrower than the
-  ladder, *why* — a library its own front end cannot compile on a released MSVC
-  is a fact about that library.
-- **Its badges and its required-check list**, both of which are per-repository
-  URLs and branch-protection settings that no shared workflow can carry.
-- **Its repo-specific inputs**: the `clang-tidy` regexes, a `cxx_flags`
-  workaround, a `libcxx_tiers: ""`, the `dependency_repos` a consumption leg
-  needs.
-
-The platform workflows share a shape: a first job resolves the requested rungs
-to a strategy matrix, a second builds them, and a third gate reports one check
-name that does not move as the ladder does.
-
-Every rung runs on every event, **pull requests included**. `reduce_on_pr: true`
-opts a caller into running the floor and the ceiling in Debug alone on a pull
-request -- the oldest compiler the code claims and the one that changes weekly.
-That reduction used to be the default, on the reasoning that the middle rung
-has a released compiler either side of it and a push covers it within the hour.
-The hour is the problem: the gate a caller marks as its required check reports
-on the legs that ran, so a reduced pull request goes green having never
-compiled the middle rung, and a break there merges before the push that finds
-it. `sanitizers.yml` had already refused the same trade for its own reason --
-what a sanitizer reports depends on the release doing the instrumenting -- and
-the argument generalises.
-
-**Concurrency belongs to the caller.** None of these declare a concurrency
-group: inside a called workflow `github.workflow_ref` names the *calling*
-workflow, so a group defined here would land in the caller's own group and
-cancel it. The stub knows whether it was reached by a push, a schedule, or a
-canary; these do not.
 
 ### `visual-studio.yml`
 
@@ -302,59 +345,21 @@ given; none of them is configured against vcpkg's toolchain file, since
 manifest mode keys off the tree being configured and a dependency shipping its
 own `vcpkg.json` would install *that* repository's test dependencies here.
 
-### `sanitizers.yml`
+### What a caller still documents
 
-Five Linux legs, each building and running the caller's test suite in Debug,
-and each run on every rung its compiler fills -- fifteen jobs, on every event.
-A sanitizer's instrumentation is no more fixed across releases than across
-compilers: GCC's UBSan does not diagnose the signed overflow
-Clang's does on a `_BitInt(2)`, and a bit-precise library has no reason to
-assume one GCC agrees with the next about that either.
+This repository owns what a rung resolves to, which legs a workflow runs, what
+the defaults are, and what the gate is called — everything above. A caller's
+README and CONTRIBUTING own the rest, and restating the tables above instead is
+what lets three repositories disagree about the same CI:
 
-| Leg | Compiler | Flags |
-| :-- | :------- | :---- |
-| ASan + LSan | GCC | `-fsanitize=address -fno-omit-frame-pointer` |
-| ASan + LSan | Clang, libc++ | the same, plus `-stdlib=libc++` |
-| UBSan | GCC | `-fsanitize=undefined -fno-sanitize-recover=undefined` |
-| UBSan | Clang | `-fsanitize=undefined -fno-sanitize-recover=undefined` |
-| Implicit conversion | Clang | `-fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion` |
-
-ASan runs against both standard libraries. Its detection is a shared runtime,
-so a second compiler alone would re-run one check -- but the container-overflow
-annotations are not shared: libc++ instruments `vector`, `string` and `deque`,
-while libstdc++ annotates `vector` alone and only under
-`_GLIBCXX_SANITIZE_VECTOR`. An overflow inside a `std::string` is invisible to
-the first leg and visible to the second. That leg rebuilds Boost.Test against
-libc++ through an overlay triplet, since a dependency built against the other
-standard library would not link with it in any case.
-
-Leak detection is **on**: `ASAN_OPTIONS=detect_leaks=1` is set explicitly, so a
-repository that allocates gets the check rather than inheriting a suppression
-written for one that does not.
-
-The libc++ leg has its own `libcxx_tiers`, defaulting to the Clang ladder. A
-library can be perfectly sound and still not build against libc++ at all -- one
-missing C++23 range adaptor is enough -- and that is a fact about the standard
-library rather than about the sanitizer. Left in the Clang ladder, such a
-library reddens this workflow's gate permanently, which is worse than not
-running the leg: a gate that is always red reports nothing about the legs that
-were meant to be green. `libcxx_tiers: ""` drops it.
-
-UBSan runs under both compilers because the two implementations do not check
-the same set -- the first run of this workflow found signed overflow that GCC's
-UBSan does not diagnose. `-fsanitize=implicit-conversion` is Clang-only (`g++`
-rejects it) and catches the value-dependent truncations and sign changes that
-`-Wconversion` can only diagnose where it proves them statically. That group
-also fires on well-defined but lossy conversions, which a standard library is
-full of by design, so it runs with an ignorelist confining it to the code under
-test; without one it reports only on libstdc++.
-
-Deliberately absent: **TSan** (no threads), **MSan** (needs an instrumented
-libstdc++ *and* Boost.Test), **`-fsanitize=unsigned-integer-overflow`**
-(the wraparound is deliberate), **`_GLIBCXX_DEBUG`** (ABI-changing, so
-Boost.Test would need rebuilding to match), and **CFI** (no virtual dispatch).
-Linux-only by necessity: MSVC offers ASan alone, macOS has no LeakSanitizer,
-MinGW no usable runtime.
+- **Which families and rungs it asks for**, and where that is narrower than the
+  ladder, *why* — a library its own front end cannot compile on a released MSVC
+  is a fact about that library.
+- **Its badges and its required-check list**, both of which are per-repository
+  URLs and branch-protection settings that no shared workflow can carry.
+- **Its repo-specific inputs**: the `clang-tidy` regexes, a `cxx_flags`
+  workaround, a `libcxx_tiers: ""`, the `dependency_repos` a consumption leg
+  needs.
 
 ## Actions
 
