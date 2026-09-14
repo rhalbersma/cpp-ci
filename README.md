@@ -39,11 +39,29 @@ selected Visual Studio bundles: a runner-image fact, not something this
 repository pins, and the one number in a caller's matrix that this table cannot
 promise to keep current.
 
-Not every family fills every rung — Apple publishes no Clang trunk, and WinLibs
-publishes no MinGW one — so the resolver reports `supported=false` for an empty
-one rather than inventing a compiler. An empty rung is a fact about the vendor;
-a caller *dropping* a rung the vendor does fill is a fact about that library,
-and belongs in its README rather than here.
+The runner images are not uniform across the Windows rows, and the difference is
+load-bearing rather than an oversight. The `msvc` rungs move to `windows-2025`
+because that is the image carrying Visual Studio 18; `mingw` stays on
+`windows-2022` on every rung, because a WinLibs toolchain is a self-contained
+archive this CI downloads and the host image supplies nothing it needs.
+
+Both empty rungs above are the vendor's doing, and the resolver reports
+`supported=false` for one rather than inventing a compiler:
+
+- **`apple-clang` development** — Apple publishes no Clang trunk. That row has
+  had this shape since it was written.
+- **`mingw` development** — WinLibs publishes snapshots, but none newer than its
+  own releases and never a GCC 17 one. This rung *did* exist, labelled `17-SVN`,
+  and was dropped in [#33](https://github.com/rhalbersma/cpp-ci/pull/33) because
+  the label lied: it resolved to a February `16.0.1` snapshot, older than the
+  `16.2.0` on the qualification rung below it. A rung running a compiler older
+  than the one beneath it looks like coverage and is none, and it had already
+  caused a measurement to be reported against a toolchain it did not use.
+
+Callers passing the default `stable,qualification,development` are unaffected by
+either: an absent rung is dropped with a notice. An empty rung is a fact about
+the vendor; a caller *dropping* a rung the vendor does fill is a fact about that
+library, and belongs in its README rather than here.
 
 ## Usage
 
