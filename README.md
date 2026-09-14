@@ -16,6 +16,14 @@ Every toolchain is tracked on three rungs — **stable**, **qualification**, and
 so a compiler release is one edit here rather than one per repository, and every
 caller moves up on its next pin bump.
 
+What the ladder offers is the three most recent releases of each family that a
+current GitHub Actions image can run — not the full range a library supports.
+The older compilers a header-only library often still compiles with are not
+here, because the images that carried them are gone, and a runner is the only
+thing this CI can offer. So the ladder is the recent end of a library's support
+range by construction, and the rest of that range is the caller's to record; see
+[loosening and tightening](#loosening-and-tightening-the-ladder).
+
 This is the master table: what each rung resolves to, for every family the
 resolver knows. A caller's own README names the rungs *it* asks for and links
 here for what they are, rather than restating a version ladder that moves on a
@@ -370,13 +378,17 @@ so — of which CI enforces exactly one:
 | A rung it cannot use at all | `tiers:` names the rungs it can | **yes** |
 | A floor *inside* a rung | its README, verified by hand | no |
 
-**Looser.** The ladder runs current releases; a library's language baseline is
-usually older, and the earliest toolchain that builds it is older still.
-[xstd-misc](https://github.com/rhalbersma/xstd-misc) asks for C++20 and names
-GCC 10, Clang 11 and MSVC 19.29 (VS 2019 16.11) as the earliest known to compile
-it. No rung here is within five releases of those, so they are hand-verified
-claims the ladder neither checks nor contradicts, and its README says which is
-which.
+**Looser.** This is the common case, and it is the ladder's shape rather than
+any caller's shortfall: the rungs are the recent three, and a library's language
+baseline is older than that, with the earliest toolchain that builds it older
+still. Those compilers are not on the ladder because GitHub Actions no longer
+offers images carrying them, so no leg can be made to cover them at all.
+[xstd-misc](https://github.com/rhalbersma/xstd-misc) is the worked example: it
+asks for C++20 and names GCC 10, Clang 11 and MSVC 19.29 (VS 2019 16.11) as the
+earliest known to compile it, marks them hand-verified, and says plainly that CI
+covers only the rungs in its table. That is the right division — a floor no
+runner exists for is a claim its author stands behind, not a gate — and a
+caller's README is where it belongs.
 
 **Tighter, by dropping a rung.** Where the library genuinely does not build on
 a rung the vendor fills, the caller names the rungs it has and the gate covers
