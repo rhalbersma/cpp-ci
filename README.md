@@ -1,32 +1,77 @@
-# Reusable CI for C++ projects
+# Reusable Continuous Integration for C++ projects
 
 [![License](https://img.shields.io/badge/license-Boost-blue.svg)](https://opensource.org/licenses/BSL-1.0)
 [![Actionlint](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml/badge.svg)](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/rhalbersma/cpp-ci/badge)](https://scorecard.dev/viewer/?uri=github.com/rhalbersma/cpp-ci)
 
-Shared GitHub Actions workflows for header-only C++ libraries tested with
-Boost.Test through a vcpkg manifest. Calling repositories keep a thin stub per
-workflow and no CI logic of their own.
+Shared GitHub Actions workflows for header-only C++ libraries built with CMake,
+whose test dependencies come from a `vcpkg.json` manifest and whose tests are
+registered with CTest. Calling repositories keep a thin stub per workflow and
+no CI logic of their own.
 
-*Continuous integration* here is the broad sense: not unit testing alone, but
-every check a change should survive before it merges.
+CMake is the hard requirement, and it goes deeper than driving the build:
+`cxx_flags` reaches the compiler as `CMAKE_CXX_FLAGS`, the Release and Debug
+legs are `CMAKE_BUILD_TYPE`, `clang-tidy.yml` needs the compile database
+`CMAKE_EXPORT_COMPILE_COMMANDS` writes, and the three consumption models are
+CMake's own. A **test framework** is not a requirement and is named nowhere
+here: a leg runs `vcpkg install` in manifest mode and then `ctest`, so
+Boost.Test, Catch2 and GoogleTest all work, and swapping one for another needs
+no change on this side.
+
+The term is meant in the broad sense: not unit testing alone, but every check
+a change should survive before it merges.
 
 | Kind of check | What it establishes | Workflows |
 | :------------ | :------------------ | :-------- |
-| Unit testing | the library compiles, and its tests pass, on every rung named | the six [ladders](#unit-testing) |
-| Sanitizers | it does so with no undefined behaviour, bad access or leak | [`sanitizers.yml`](#sanitizersyml) |
-| Coverage | every line and branch is exercised | `coverage.yml` |
-| Static analysis | no finding from a linter or a security query suite | `clang-tidy.yml`, `msvc-analyze.yml`, `codeql.yml` |
-| Code formatting | the tree matches the caller's `.clang-format` | `clang-format.yml` |
-| Workflow checks | the Actions files are valid and the supply chain pinned | `actionlint.yml`, `scorecard.yml` |
-| Consumability | the installed package can actually be consumed | `consumption.yml` |
+| [Unit testing](#unit-testing) | the library compiles, and its tests pass, on every rung named | the six ladders |
+| [Coverage](#coverage) | every line and branch is exercised | `coverage.yml` |
+| [Sanitizers](#sanitizers) | it works with no undefined behaviour, bad access or leak | `sanitizers.yml` |
+| [Static analysis](#static-analysis) | no finding from a linter or a security query suite | `clang-tidy.yml`, `msvc-analyze.yml`, `codeql.yml` |
+| [Consumability](#consumability) | the installed package can actually be consumed | `consumption.yml` |
+| [Code formatting](#code-formatting) | the tree matches the caller's `.clang-format` | `clang-format.yml` |
+| [Workflow checks](#workflow-checks) | the Actions files are valid and the supply chain pinned | `actionlint.yml`, `scorecard.yml` |
+
+Those seven are in descending order of what a green check tells you about the
+library, and the groups are the point: the first two are the test suite and
+whether it is worth trusting, the next two are defects the tests do not assert
+on — at runtime, then without running — and the last three are the package, the
+source text, and this CI rather than the library at all.
 
 The rest of this file is in the order a caller needs it.
+[Dependencies](#dependencies) is what a caller has to declare and where,
 [Tiers](#tiers-not-versions) is what a rung resolves to,
 [Usage](#usage) is what a stub contains, [Workflows](#workflows) is what each
 one runs and what its gate is called, and [Actions](#actions) and
 [Conventions](#conventions) are the pieces underneath. Each section opens with
 a table and spells out below it only what a table cannot carry.
+
+## Dependencies
+
+Third-party dependencies come from a `vcpkg.json` manifest; one with no vcpkg
+port arrives through CMake instead.
+
+| Source | How the caller declares it | Examples |
+| :----- | :------------------------- | :------- |
+| A vcpkg port | `vcpkg.json`, test-only ones behind a feature | `boost-test`, `boost-hash2`, `fmt`, `benchmark`, `range-v3` |
+| No port, typically a sibling library | `find_package(... CONFIG QUIET)`, with a `FetchContent` fallback | `xstd-ints`, `xstd-misc` |
+
+A manifest is required either way: every leg that configures the library runs
+`vcpkg install` in manifest mode, unconditionally and with no guard for a
+missing `vcpkg.json`. A library with nothing much to declare still needs the
+file.
+
+Put the test-only dependencies behind a feature, with `default-features`
+naming it, so a tests-off configure does not need them. That is why
+[`consumption.yml`](#consumability) defaults `vcpkg: false` — it configures
+with `-DBUILD_TESTING=OFF`, which normally leaves a header-only library needing
+nothing at all. A library whose own headers `find_package(... REQUIRED)`
+something passes `vcpkg: true`.
+
+The `FetchContent` fallback needs care on exactly one leg. `install(EXPORT)`
+cannot export a FetchContent build tree, so the `find_package` consumption
+model needs that dependency really installed rather than fetched; the
+`dependency_repos` input does that, at pinned revisions. Everywhere else the
+fallback is invisible.
 
 ## Tiers, not versions
 
@@ -204,104 +249,7 @@ workflow, so a group defined here would land in the caller's own group and
 cancel it. The stub knows whether it was reached by a push, a schedule, or a
 canary; these do not.
 
-### `sanitizers.yml`
-
-Five Linux legs, each building and running the caller's test suite in Debug on
-every rung its compiler fills — fifteen jobs by default, on every event.
-
-| Leg | Compiler | Flags |
-| :-- | :------- | :---- |
-| ASan + LSan | GCC | `-fsanitize=address -fno-omit-frame-pointer` |
-| ASan + LSan | Clang, libc++ | the same, plus `-stdlib=libc++` |
-| UBSan | GCC | `-fsanitize=undefined -fno-sanitize-recover=undefined` |
-| UBSan | Clang | `-fsanitize=undefined -fno-sanitize-recover=undefined` |
-| Implicit conversion | Clang | `-fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion` |
-
-The legs cross the ladder rather than pinning one release, because a
-sanitizer's instrumentation is no more fixed across releases than across
-compilers: what a run reports depends on the toolchain doing the
-instrumenting. It takes one rung list per compiler family, since the legs are
-split between them — `gcc_tiers`, `clang_tiers`, and `libcxx_tiers` for the
-ASan libc++ leg — and the gate is `<job> / all`.
-
-ASan runs against both standard libraries. Its detection is a shared runtime,
-so a second compiler alone would re-run one check — but the container-overflow
-annotations are not shared: libc++ instruments `vector`, `string` and `deque`,
-while libstdc++ annotates `vector` alone and only under
-`_GLIBCXX_SANITIZE_VECTOR`. An overflow inside a `std::string` is invisible to
-the first leg and visible to the second. That leg rebuilds Boost.Test against
-libc++ through an overlay triplet, since a dependency built against the other
-standard library would not link with it in any case.
-
-Leak detection is **on**: `ASAN_OPTIONS=detect_leaks=1` is set explicitly, so a
-repository that allocates gets the check rather than inheriting a suppression
-written for one that does not.
-
-The libc++ leg has its own `libcxx_tiers`, defaulting to the Clang ladder. A
-library can be perfectly sound and still not build against libc++ at all — one
-missing range adaptor is enough — and that is a fact about the standard library
-rather than about the sanitizer. Left in the Clang ladder, such a library
-reddens this workflow's gate permanently, which is worse than not running the
-leg: a gate that is always red reports nothing about the legs that were meant
-to be green. `libcxx_tiers: ""` drops it.
-
-UBSan runs under both compilers because the two implementations do not check
-the same set, so a clean run under one says nothing about the other.
-`-fsanitize=implicit-conversion` is Clang's alone (`g++` rejects the group) and
-catches the value-dependent truncations and sign changes that `-Wconversion`
-can only diagnose where it proves them statically. That group also fires on
-well-defined but lossy conversions, which a standard library is full of by
-design, so it runs with an ignorelist confining it to the code under test;
-without one it reports only on libstdc++.
-
-Deliberately absent: **TSan** (no threads), **MSan** (needs an instrumented
-libstdc++ *and* Boost.Test), **`-fsanitize=unsigned-integer-overflow`** (the
-wraparound is deliberate), **`_GLIBCXX_DEBUG`** (ABI-changing, so Boost.Test
-would need rebuilding to match), and **CFI** (no virtual dispatch). Linux-only
-by necessity: MSVC offers ASan alone, macOS has no LeakSanitizer, MinGW no
-usable runtime.
-
-### Analysis and quality
-
-The remaining eight, each answering one narrower question about the library
-rather than building a matrix of it.
-
-| Workflow | What it runs | Default rungs | Gate |
-| :------- | :----------- | :------------ | :--- |
-| [`clang-tidy.yml`](.github/workflows/clang-tidy.yml) | The caller's `.clang-tidy` over the public headers, their per-header translation units and the test sources | all three `clang` | `<job> / all` |
-| [`msvc-analyze.yml`](.github/workflows/msvc-analyze.yml) | `/analyze`, in the role clang-tidy fills on the other side | all three `msvc` | `<job> / all` |
-| [`coverage.yml`](.github/workflows/coverage.yml) | `ctest`, then `gcovr` gated at `--fail-under-line 100 --fail-under-branch 100` | stable `gcc` | `<job> / gcovr` |
-| [`codeql.yml`](.github/workflows/codeql.yml) | The `c-cpp` `security-extended` query suite | stable `gcc` | `<job> / Analyze` |
-| [`consumption.yml`](#consumptionyml) | `find_package`, `add_subdirectory` and `FetchContent` against the installed package | stable `gcc` | `<job> / Consume` |
-| [`clang-format.yml`](.github/workflows/clang-format.yml) | `clang-format --dry-run --Werror` over `include` and `test` | stable `clang` | `<job> / clang-format` |
-| [`actionlint.yml`](.github/workflows/actionlint.yml) | Actions syntax and expressions over `.github/workflows/*.yml`; ShellCheck off unless asked for | — | `<job> / actionlint` |
-| [`scorecard.yml`](.github/workflows/scorecard.yml) | OpenSSF Scorecard, publishing the result the badge reads | — | none, see below |
-
-A finding fails the run in every case: a check nobody has to act on stops being
-a check.
-
-Both analyzers run on **all three** rungs rather than one, for the reason the
-ladders do: a toolset gains, renames and retires checks, so it changes the
-verdict on code nobody touched. A caller whose compiler legs are green on three
-rungs is claiming all three as buildable, and a reader who builds with the
-newest runs *its* analyzer over their translation units. Both take Debug, since
-`-DNDEBUG` rewrites every `assert` before the analyzer sees it.
-
-`clang-format.yml` takes its own rung, defaulting to **stable** and
-deliberately not following the compiler ladder: a formatter release reformats
-the code base, so moving it is a decision about the repository rather than
-about coverage, and a caller may well want it to lag. `coverage.yml` and
-`codeql.yml` sit on stable because what they measure is the code, not the
-toolchain.
-
-`scorecard.yml` cannot be a required check and is not meant to be: it runs on
-pushes to the default branch and on a schedule, never on a pull request.
-[`self-check.yml`](.github/workflows/self-check.yml) is this repository's own
-and not for callers to stub. Codecov, where a caller enables it, posts
-`codecov/project` and `codecov/patch` on its own; those are the caller's
-configuration, not this repository's.
-
-### `visual-studio.yml`
+#### `visual-studio.yml`
 
 One workflow stubbed twice, once per toolset, which is what a caller's README
 shows as its separate `MSVC` and `Clang-CL` rows.
@@ -339,7 +287,113 @@ ladder's qualification and development rungs share a label and a runner.
 `preview_toolset_prefix` is separate from `toolset` because that rung takes a
 `version=<n>` the released ones do not.
 
-### `consumption.yml`
+### Coverage
+
+One job on one rung, running the test suite under `ctest` and then `gcovr`,
+with the bar as a hard gate rather than a report.
+
+| Measure | Default bar | Enforced by |
+| :------ | :---------- | :---------- |
+| Line coverage | `--fail-under-line 100` | [`coverage.yml`](.github/workflows/coverage.yml), gate `<job> / gcovr` |
+| Branch coverage | `--fail-under-branch 100` | the same job |
+| Project and patch | the caller's own `codecov.yml` | Codecov's `codecov/project` and `codecov/patch` |
+
+Both thresholds are inputs, so a caller ratcheting up from below 100 passes
+lower numbers rather than turning the gate off. `exclude` defaults to
+`test/.* build/.*`, keeping the report to the library's own headers.
+
+It sits on the stable `gcc` rung because what it measures is the code rather
+than the toolchain, and because `gcov` has to match the compiler that produced
+the data. Codecov's two checks, where a caller enables them, are that caller's
+configuration and not this repository's.
+
+### Sanitizers
+
+Five Linux legs, each building and running the caller's test suite in Debug on
+every rung its compiler fills — fifteen jobs by default, on every event.
+
+| Leg | Compiler | Flags |
+| :-- | :------- | :---- |
+| ASan + LSan | GCC | `-fsanitize=address -fno-omit-frame-pointer` |
+| ASan + LSan | Clang, libc++ | the same, plus `-stdlib=libc++` |
+| UBSan | GCC | `-fsanitize=undefined -fno-sanitize-recover=undefined` |
+| UBSan | Clang | `-fsanitize=undefined -fno-sanitize-recover=undefined` |
+| Implicit conversion | Clang | `-fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion` |
+
+The legs cross the ladder rather than pinning one release, because a
+sanitizer's instrumentation is no more fixed across releases than across
+compilers: what a run reports depends on the toolchain doing the
+instrumenting. It takes one rung list per compiler family, since the legs are
+split between them — `gcc_tiers`, `clang_tiers`, and `libcxx_tiers` for the
+ASan libc++ leg — and the gate is `<job> / all`.
+
+ASan runs against both standard libraries. Its detection is a shared runtime,
+so a second compiler alone would re-run one check — but the container-overflow
+annotations are not shared: libc++ instruments `vector`, `string` and `deque`,
+while libstdc++ annotates `vector` alone and only under
+`_GLIBCXX_SANITIZE_VECTOR`. An overflow inside a `std::string` is invisible to
+the first leg and visible to the second. That leg rebuilds the manifest's
+dependencies against libc++ through an overlay triplet, since a test framework
+built against the other standard library would not link with it in any case.
+
+Leak detection is **on**: `ASAN_OPTIONS=detect_leaks=1` is set explicitly, so a
+repository that allocates gets the check rather than inheriting a suppression
+written for one that does not.
+
+The libc++ leg has its own `libcxx_tiers`, defaulting to the Clang ladder. A
+library can be perfectly sound and still not build against libc++ at all — one
+missing range adaptor is enough — and that is a fact about the standard library
+rather than about the sanitizer. Left in the Clang ladder, such a library
+reddens this workflow's gate permanently, which is worse than not running the
+leg: a gate that is always red reports nothing about the legs that were meant
+to be green. `libcxx_tiers: ""` drops it.
+
+UBSan runs under both compilers because the two implementations do not check
+the same set, so a clean run under one says nothing about the other.
+`-fsanitize=implicit-conversion` is Clang's alone (`g++` rejects the group) and
+catches the value-dependent truncations and sign changes that `-Wconversion`
+can only diagnose where it proves them statically. That group also fires on
+well-defined but lossy conversions, which a standard library is full of by
+design, so it runs with an ignorelist confining it to the code under test;
+without one it reports only on libstdc++.
+
+Deliberately absent: **TSan** (no threads), **MSan** (needs an instrumented
+libstdc++ *and* an instrumented test framework),
+**`-fsanitize=unsigned-integer-overflow`** (the wraparound is deliberate),
+**`_GLIBCXX_DEBUG`** (ABI-changing, so the test framework would need rebuilding
+to match), and **CFI** (no virtual dispatch). Linux-only
+by necessity: MSVC offers ASan alone, macOS has no LeakSanitizer, MinGW no
+usable runtime.
+
+### Static analysis
+
+Three analyzers, one workflow each, and the two bound to a toolset run the
+whole ladder rather than one rung.
+
+| Workflow | Analyzer | Default rungs | Gate |
+| :------- | :------- | :------------ | :--- |
+| [`clang-tidy.yml`](.github/workflows/clang-tidy.yml) | the caller's `.clang-tidy`, over the public headers, their per-header translation units and the test sources | all three `clang` | `<job> / all` |
+| [`msvc-analyze.yml`](.github/workflows/msvc-analyze.yml) | MSVC's `/analyze`, in the role clang-tidy fills on the other side | all three `msvc` | `<job> / all` |
+| [`codeql.yml`](.github/workflows/codeql.yml) | the `c-cpp` `security-extended` query suite | stable `gcc` | `<job> / Analyze` |
+
+A finding fails the run in every case — `WarningsAsErrors` on the clang-tidy
+side, `warnings_as_errors: true` by default on the MSVC side — because a check
+nobody has to act on stops being a check.
+
+The two toolset analyzers run **all three** rungs for the reason the ladders
+do: a toolset gains, renames and retires checks, so it changes the verdict on
+code nobody touched. A caller whose compiler legs are green on three rungs is
+claiming all three as buildable, and a reader who builds with the newest runs
+*its* analyzer over their own translation units. Both take Debug, since
+`-DNDEBUG` rewrites every `assert` before the analyzer sees it.
+
+`codeql.yml` sits on stable because what it queries is the code rather than the
+toolchain; its extractor runs front-end side, so that rung is also the standard
+library the analysis sees. `clang-tidy.yml` configures a compile database and
+never builds the library, which is why it appears under that line in the table
+above.
+
+### Consumability
 
 One job on one rung, building each consumption model the caller ships under
 `consumer_dir` (`test/consumer` by default) against the library configured with
@@ -394,7 +448,50 @@ none is configured against vcpkg's toolchain file, since manifest mode keys off
 the tree being configured and a dependency shipping its own `vcpkg.json` would
 install *that* repository's test dependencies here.
 
-### What a caller still documents
+### Code formatting
+
+One job on one rung, checking the tree against the caller's `.clang-format`
+without writing to it. The gate is `<job> / clang-format`.
+
+| Input | Default | What it selects |
+| :---- | :------ | :-------------- |
+| `tier` | `stable` | the Clang release supplying `clang-format` |
+| `paths` | `include test` | the roots searched |
+| `file_regex` | `.hpp` and `.cpp` | the files checked under them |
+
+`--dry-run --Werror` turns a reformatting diff into a failure rather than a
+patch, so the job reports and never rewrites the caller's tree. The default
+`file_regex` is a `find` pattern rather than a glob:
+
+```console
+.*\.\(hpp\|cpp\)
+```
+
+The rung is deliberately its own and lags on stable: a formatter release
+reformats the code base, so moving it is a decision about the repository rather
+than about coverage, and a caller may well want it to wait. A repository with
+no `.clang-format` can leave its stub dispatch-only — adopting a style is a
+separate decision from adopting this CI.
+
+### Workflow checks
+
+Two workflows whose subject is the CI itself rather than the library.
+
+| Workflow | What it checks | When it runs | Gate |
+| :------- | :------------- | :----------- | :--- |
+| [`actionlint.yml`](.github/workflows/actionlint.yml) | Actions syntax and expressions over `.github/workflows/*.yml` | every event | `<job> / actionlint` |
+| [`scorecard.yml`](.github/workflows/scorecard.yml) | OpenSSF Scorecard, publishing the result the badge reads | pushes to the default branch, and a schedule | none on a pull request |
+
+actionlint's ShellCheck pass is off unless asked for: `shellcheck` is empty by
+default, which keeps the job to Actions syntax and expressions and leaves shell
+policy to be managed on its own.
+
+`scorecard.yml` cannot be a required check and is not meant to be — it never
+runs on a pull request, so there is nothing for branch protection to wait on.
+[`self-check.yml`](.github/workflows/self-check.yml) is this repository's own
+and not for callers to stub.
+
+## What a caller still documents
 
 Everything above is this repository's to state; this is where the line falls.
 
@@ -411,7 +508,7 @@ branch-protection settings no shared workflow can carry, and inputs like the
 `dependency_repos` a consumption leg needs. Restating this repository's half
 instead is what lets several repositories disagree about the same CI.
 
-### Loosening and tightening the ladder
+## Loosening and tightening the ladder
 
 A caller is not bound to the ladder in either direction, and of the three ways
 its own requirements can depart from it, CI enforces exactly one.
