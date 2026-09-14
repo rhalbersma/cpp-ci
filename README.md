@@ -32,11 +32,40 @@ every check a change should survive before it merges.
 | Consumability | the installed package can actually be consumed | `consumption.yml` |
 
 The rest of this file is in the order a caller needs it.
+[Dependencies](#dependencies) is what a caller has to declare and where,
 [Tiers](#tiers-not-versions) is what a rung resolves to,
 [Usage](#usage) is what a stub contains, [Workflows](#workflows) is what each
 one runs and what its gate is called, and [Actions](#actions) and
 [Conventions](#conventions) are the pieces underneath. Each section opens with
 a table and spells out below it only what a table cannot carry.
+
+## Dependencies
+
+Third-party dependencies come from a `vcpkg.json` manifest; one with no vcpkg
+port arrives through CMake instead.
+
+| Source | How the caller declares it | Examples |
+| :----- | :------------------------- | :------- |
+| A vcpkg port | `vcpkg.json`, test-only ones behind a feature | `boost-test`, `boost-hash2`, `fmt`, `benchmark`, `range-v3` |
+| No port, typically a sibling library | `find_package(... CONFIG QUIET)`, with a `FetchContent` fallback | `xstd-ints`, `xstd-misc` |
+
+A manifest is required either way: every leg that configures the library runs
+`vcpkg install` in manifest mode, unconditionally and with no guard for a
+missing `vcpkg.json`. A library with nothing much to declare still needs the
+file.
+
+Put the test-only dependencies behind a feature, with `default-features`
+naming it, so a tests-off configure does not need them. That is why
+[`consumption.yml`](#consumptionyml) defaults `vcpkg: false` — it configures
+with `-DBUILD_TESTING=OFF`, which normally leaves a header-only library needing
+nothing at all. A library whose own headers `find_package(... REQUIRED)`
+something passes `vcpkg: true`.
+
+The `FetchContent` fallback needs care on exactly one leg. `install(EXPORT)`
+cannot export a FetchContent build tree, so the `find_package` consumption
+model needs that dependency really installed rather than fetched; the
+`dependency_repos` input does that, at pinned revisions. Everywhere else the
+fallback is invisible.
 
 ## Tiers, not versions
 
