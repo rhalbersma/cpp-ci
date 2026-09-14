@@ -4,10 +4,10 @@
 [![Actionlint](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml/badge.svg)](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/rhalbersma/cpp-ci/badge)](https://scorecard.dev/viewer/?uri=github.com/rhalbersma/cpp-ci)
 
-Shared GitHub Actions workflows for header-only C++ libraries built with CMake,
-whose test dependencies come from a `vcpkg.json` manifest and whose tests are
-registered with CTest. Calling repositories keep a thin stub per workflow and
-no CI logic of their own.
+Shared GitHub Actions workflows for C++ libraries built with CMake, whose
+dependencies come from a `vcpkg.json` manifest and whose tests are registered
+with CTest. Calling repositories keep a thin stub per workflow and no CI logic
+of their own.
 
 CMake is the hard requirement, and it goes deeper than driving the build:
 `cxx_flags` reaches the compiler as `CMAKE_CXX_FLAGS`, the Release and Debug
@@ -17,6 +17,14 @@ CMake's own. A **test framework** is not a requirement and is named nowhere
 here: a leg runs `vcpkg install` in manifest mode and then `ctest`, so
 Boost.Test, Catch2 and GoogleTest all work, and swapping one for another needs
 no change on this side.
+
+**Header-only** is not a requirement either, only what every current caller
+happens to be. A leg configures, builds and tests whatever the CMake project
+defines, compiled artifacts included; nothing here inspects a target's type.
+The one place the shape shows through is [static analysis](#static-analysis):
+`clang-tidy.yml` walks the public headers under `header_dir`, so a library with
+compiled sources has those analysed only if it widens `sources_regex` to reach
+them.
 
 The term is meant in the broad sense: not unit testing alone, but every check
 a change should survive before it merges.
