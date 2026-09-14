@@ -1,4 +1,4 @@
-# Reusable CI for C++ projects
+# Reusable continuous integration for C++ projects
 
 [![License](https://img.shields.io/badge/license-Boost-blue.svg)](https://opensource.org/licenses/BSL-1.0)
 [![Actionlint](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml/badge.svg)](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml)
@@ -18,8 +18,8 @@ here: a leg runs `vcpkg install` in manifest mode and then `ctest`, so
 Boost.Test, Catch2 and GoogleTest all work, and swapping one for another needs
 no change on this side.
 
-*Continuous integration* here is the broad sense: not unit testing alone, but
-every check a change should survive before it merges.
+The term is meant in the broad sense: not unit testing alone, but every check
+a change should survive before it merges.
 
 | Kind of check | What it establishes | Workflows |
 | :------------ | :------------------ | :-------- |
