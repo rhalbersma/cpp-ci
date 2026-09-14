@@ -329,7 +329,7 @@ no prefix path. Two inputs cover the libraries where it is not:
       # is configured. One "<url> <revision>" per line; the revision is
       # required, so this leg does not depend on what upstream pushed today.
       dependency_repos: |
-        https://github.com/rhalbersma/xstd.git 7f7cbdd6e4174107ea062484f31c81fbfe220f7a
+        https://github.com/<owner>/<repo>.git <sha>
 ```
 
 The library is configured against vcpkg's toolchain file, which puts vcpkg in
