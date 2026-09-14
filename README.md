@@ -18,13 +18,12 @@ here: a leg runs `vcpkg install` in manifest mode and then `ctest`, so
 Boost.Test, Catch2 and GoogleTest all work, and swapping one for another needs
 no change on this side.
 
-**Header-only** is not a requirement either, only what every current caller
-happens to be. A leg configures, builds and tests whatever the CMake project
-defines, compiled artifacts included; nothing here inspects a target's type.
-The one place the shape shows through is [static analysis](#static-analysis):
-`clang-tidy.yml` walks the public headers under `header_dir`, so a library with
-compiled sources has those analysed only if it widens `sources_regex` to reach
-them.
+**Header-only** is not a requirement either. A leg configures, builds and
+tests whatever the CMake project defines, compiled artifacts included, and
+nothing here inspects a target's type. [Static analysis](#static-analysis)
+takes the library's own sources from the compile database when there are any,
+so a library with compiled sources needs no more configuration than one
+without.
 
 The term is meant in the broad sense: not unit testing alone, but every check
 a change should survive before it merges.
@@ -400,6 +399,23 @@ toolchain; its extractor runs front-end side, so that rung is also the standard
 library the analysis sees. `clang-tidy.yml` configures a compile database and
 never builds the library, which is why it appears under that line in the table
 above.
+
+`clang-tidy.yml` makes four passes, and only the two regexes are a caller's to
+name:
+
+| Pass | What it covers | Configured by |
+| :--- | :------------- | :------------ |
+| Public headers | the generated per-header translation units | `self_sufficiency_regex` |
+| Direct header dependencies | each header again as a primary input, so `misc-include-cleaner` can tell a direct include from a transitive one | `header_dir`, `header_exclude` |
+| Library sources | the library's own compiled sources | discovered |
+| Test sources | the test tree | `sources_regex` |
+
+The library-sources pass is discovered rather than configured: `library_source_dir`
+defaults to `src`, and the pass runs over whatever the compile database already
+holds under it. A library without that directory passes straight through with a
+line in the log, so nothing has to be opted out of; a library keeping its
+sources elsewhere names the directory, and `library_source_dir: ""` disables
+the pass.
 
 ### Consumability
 

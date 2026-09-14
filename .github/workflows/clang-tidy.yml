@@ -57,6 +57,16 @@ on:
         type: string
         required: false
         default: ""
+      library_source_dir:
+        description: >
+          The library's own compiled sources, distinct from sources_regex,
+          which names the test sources. Analysed straight from the compile
+          database when the directory is there, so a library with sources
+          needs nothing configured here and a header-only one has nothing to
+          skip past. Empty disables the pass outright.
+        type: string
+        required: false
+        default: src
       adapted_dirs:
         description: >
           Space-separated directories of optional third-party libraries that
@@ -250,6 +260,43 @@ jobs:
             "clang-tidy-${VERSION}" "$header" -- \
               -x c++-header "$CXX_STD" -I"$HEADER_DIR" "${adapted[@]}"
           done 2>&1 | tee -a clang-tidy-report.txt
+
+      # The library's own sources, when it has any. Discovered rather than
+      # configured: the compile database already knows every translation unit
+      # the build has, so a caller with sources gets them analysed without
+      # naming a pattern, and a header-only caller passes through with a line
+      # in the log rather than a failure or a skipped step it had to opt out of.
+      - name: Run clang-tidy over the library sources
+        shell: bash
+        env:
+          VERSION: ${{ matrix.version }}
+          SOURCE_DIR: ${{ inputs.library_source_dir }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SOURCE_DIR" ]; then
+            echo "library_source_dir is empty: pass disabled."
+            exit 0
+          fi
+          if [ ! -d "$SOURCE_DIR" ]; then
+            echo "No '$SOURCE_DIR' directory: a header-only library has none."
+            exit 0
+          fi
+          # Absolute, because run-clang-tidy matches the compile database's own
+          # paths; and with the trailing slash, so the pattern cannot anchor on
+          # a sibling whose name merely starts the same way.
+          dir="$(cd "$SOURCE_DIR" && pwd)"
+          # .file may be relative to .directory, so resolve it before matching.
+          if ! jq -e --arg dir "$dir/" 'any(.[];
+                 (if (.file | startswith("/"))
+                  then .file
+                  else .directory + "/" + .file
+                  end) | startswith($dir))' \
+               build/compile_commands.json > /dev/null; then
+            echo "::notice::'$SOURCE_DIR' exists but no compile database entry lives under it"
+            exit 0
+          fi
+          "run-clang-tidy-${VERSION}" -quiet -p build "$dir/.*" 2>&1 \
+            | tee -a clang-tidy-report.txt
 
       # A separate pass so a finding names the tree whose rulebook it came from.
       - name: Run clang-tidy over the test sources
