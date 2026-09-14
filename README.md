@@ -4,12 +4,19 @@
 [![Actionlint](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml/badge.svg)](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/rhalbersma/cpp-ci/badge)](https://scorecard.dev/viewer/?uri=github.com/rhalbersma/cpp-ci)
 
-Shared GitHub Actions workflows for header-only C++ libraries whose test
-dependencies come from a `vcpkg.json` manifest and whose tests are registered
-with CTest. No test framework is named anywhere here — Boost.Test, Catch2 and
-GoogleTest all work, since a leg installs whatever the manifest declares and
-then runs `ctest`. Calling repositories keep a thin stub per workflow and no
-CI logic of their own.
+Shared GitHub Actions workflows for header-only C++ libraries built with CMake,
+whose test dependencies come from a `vcpkg.json` manifest and whose tests are
+registered with CTest. Calling repositories keep a thin stub per workflow and
+no CI logic of their own.
+
+CMake is the hard requirement, and it goes deeper than driving the build:
+`cxx_flags` reaches the compiler as `CMAKE_CXX_FLAGS`, the Release and Debug
+legs are `CMAKE_BUILD_TYPE`, `clang-tidy.yml` needs the compile database
+`CMAKE_EXPORT_COMPILE_COMMANDS` writes, and the three consumption models are
+CMake's own. A **test framework** is not a requirement and is named nowhere
+here: a leg runs `vcpkg install` in manifest mode and then `ctest`, so
+Boost.Test, Catch2 and GoogleTest all work, and swapping one for another needs
+no change on this side.
 
 *Continuous integration* here is the broad sense: not unit testing alone, but
 every check a change should survive before it merges.
