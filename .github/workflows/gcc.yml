@@ -97,8 +97,8 @@ jobs:
           version: ${{ matrix.version }}
           trunk: ${{ matrix.trunk }}
 
-      # vcpkg rather than the distro's boost, and an overlay triplet so the
-      # dependencies get the GCC under test and its own libstdc++.
+      # vcpkg rather than the distro's packages, and an overlay triplet so
+      # the dependencies get the GCC under test and its own libstdc++.
       - name: Locate the overlay triplets
         id: overlay
         uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@e2886b13f6fcd1eceb231652f816b016de41be1d

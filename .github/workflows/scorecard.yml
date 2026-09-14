@@ -22,11 +22,11 @@ permissions:
 # precisely the string a caller's own conventional group evaluates to. This
 # workflow would then take that group with cancel-in-progress and cancel the run
 # that called it before any job is created -- the caller sees its Scorecard run
-# fail in about a second having started nothing at all. xstd hit exactly that on
-# pinning v0.3.1. The note that used to stand here, that github.workflow was the
-# safe choice and github.workflow_ref the dangerous one, had it wrong: inside a
-# called workflow both name the caller, and a suffix no caller would write is
-# what actually separates the two groups.
+# fail in about a second having started nothing at all. xstd-ints hit exactly
+# that on pinning v0.3.1. The note that used to stand here, that github.workflow
+# was the safe choice and github.workflow_ref the dangerous one, had it wrong:
+# inside a called workflow both name the caller, and a suffix no caller would
+# write is what actually separates the two groups.
 #
 # Serialisation is unaffected. Groups are scoped per repository, and every run
 # reaching this line -- self-run or called -- derives the same string from the

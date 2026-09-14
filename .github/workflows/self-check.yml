@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 # What this repository runs against itself. Everything else here exists to be
-# called by xstd, tabula, bit_set and dctl; this is the one workflow that is
-# only ever about cpp-ci.
+# called by xstd-misc, xstd-ints, xstd-bits, tabula and dctl; this is the one
+# workflow that is only ever about cpp-ci.
 #
 # Keeping it separate is what lets codeql.yml and actionlint.yml go back to
 # being workflow_call and nothing else. codeql.yml previously carried its own
@@ -90,9 +90,9 @@ jobs:
     # gate reads "gcc / all" or "msvc / all", because a caller's job supplies
     # the first half and cpp-ci's job the second. Nothing calls this workflow,
     # so there is no first half to inherit -- and a check called plain "all" in
-    # a ruleset list, next to xstd's "gcc / all" and "msvc / all", says nothing
-    # about what it gates. This is a display name chosen to match them, not a
-    # reusable-workflow path.
+    # a ruleset list, next to a caller's "gcc / all" and "msvc / all", says
+    # nothing about what it gates. This is a display name chosen to match
+    # them, not a reusable-workflow path.
     name: self-check / all
     needs: [ actionlint, codeql ]
     # Not always(): that runs on cancellation too, so a push superseding an

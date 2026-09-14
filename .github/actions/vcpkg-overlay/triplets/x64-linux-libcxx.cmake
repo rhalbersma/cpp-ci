@@ -4,8 +4,8 @@
 #          http://www.boost.org/LICENSE_1_0.txt)
 
 # x64-linux, but built with Clang against libc++ instead of the default
-# compiler against libstdc++. Used by the Clang-libc++ workflow
-# so that vcpkg's Boost.Test and the tests of the project under test share one standard library.
+# compiler against libstdc++. Used by the Clang-libc++ workflow so that
+# vcpkg's ports and the project under test share one standard library.
 set(VCPKG_TARGET_ARCHITECTURE x64)
 set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE static)

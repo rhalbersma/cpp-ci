@@ -4,9 +4,10 @@
 #          http://www.boost.org/LICENSE_1_0.txt)
 
 # x64-linux, but built with the GCC under test instead of whichever one the
-# runner image defaults to. Used by the GCC workflow so that vcpkg's
-# Boost.Test and the tests of the project under test share one libstdc++: the trunk snapshot
-# ships its own, newer one, and mixing the two breaks Boost.Test at runtime.
+# runner image defaults to. Used by the GCC workflow so that vcpkg's ports
+# and the project under test share one libstdc++: the trunk snapshot ships
+# its own, newer one, and mixing the two breaks any dependency that carries
+# C++ across the boundary.
 # vcpkg's ABI hash covers the compiler executable, so each GCC version gets
 # its own universe of cached binaries without any further keying.
 set(VCPKG_TARGET_ARCHITECTURE x64)

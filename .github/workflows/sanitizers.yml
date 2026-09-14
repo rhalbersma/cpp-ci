@@ -56,7 +56,7 @@ on:
           Overlay triplet for the GCC legs. Like every other workflow here,
           the dependencies are built with the compiler under test rather than
           the runner's default: a trunk snapshot ships its own libstdc++, and
-          a Boost.Test built against the runner's breaks at runtime.
+          a port built against the runner's breaks at runtime.
         type: string
         required: false
         default: x64-linux-gcc
@@ -67,9 +67,9 @@ on:
         default: x64-linux-clang
       vcpkg_libcxx_triplet:
         description: >
-          Overlay triplet for the libc++ leg. Boost.Test has to be built
-          against libc++ as well: ASan's container-overflow checking reads
-          annotations the standard library emits, and a Boost.Test built
+          Overlay triplet for the libc++ leg. The dependencies have to be
+          built against libc++ as well: ASan's container-overflow checking
+          reads annotations the standard library emits, and a port built
           against libstdc++ would not link with it in any case.
         type: string
         required: false
@@ -88,9 +88,10 @@ on:
 jobs:
   # The legs are crossed with the ladder here rather than written out: a
   # sanitizer's instrumentation is not fixed across releases any more than it
-  # is across compilers. GCC's UBSan does not diagnose the signed overflow
-  # Clang's does on a _BitInt(2), and a bit-precise library has no reason to
-  # assume one GCC agrees with the next about that either.
+  # is across compilers. Two compilers disagreeing is the easy case to
+  # picture -- there are signed overflows Clang's UBSan diagnoses and GCC's
+  # does not -- and there is no reason to assume one release of either agrees
+  # with the next.
   ladder:
     name: Resolve the ladder
     runs-on: ubuntu-24.04
