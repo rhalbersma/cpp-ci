@@ -56,7 +56,7 @@ on:
         type: string
         required: false
         default: ""
-      source_dir:
+      src_dir:
         description: >
           The library's own compiled sources. Analysed straight from the
           compile database when the directory is there, so a library with
@@ -68,7 +68,7 @@ on:
       test_dir:
         description: >
           The test tree, analysed the same way and on the same terms as
-          source_dir. Supersedes sources_regex.
+          src_dir. Supersedes sources_regex.
         type: string
         required: false
         default: test
@@ -246,7 +246,7 @@ jobs:
       - name: Resolve the trees to analyse
         shell: bash
         env:
-          SOURCE_DIR: ${{ inputs.source_dir }}
+          SRC_DIR: ${{ inputs.src_dir }}
           TEST_DIR: ${{ inputs.test_dir }}
           SOURCES_REGEX: ${{ inputs.sources_regex }}
           SELF_SUFFICIENCY_REGEX: ${{ inputs.self_sufficiency_regex }}
@@ -293,7 +293,7 @@ jobs:
           }
 
           resolve TIDY_GENERATED "Generated per-header units" "" "$SELF_SUFFICIENCY_REGEX"
-          resolve TIDY_SOURCE    "Library sources"            "$SOURCE_DIR" ""
+          resolve TIDY_SOURCE    "Library sources"            "$SRC_DIR" ""
           resolve TIDY_TEST      "Test sources"               "$TEST_DIR"   "$SOURCES_REGEX"
 
       # The public headers, through the generated self-sufficiency units.

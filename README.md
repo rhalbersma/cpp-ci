@@ -407,8 +407,12 @@ rather than a pattern — the same three a CMake project already has:
 | :--- | :------------- | :---- | :------ |
 | Generated per-header units | the self-sufficiency translation units the caller's CMake generates | `self_sufficiency_regex` | — |
 | Direct header dependencies | each header again as a primary input, so `misc-include-cleaner` can tell a direct include from a transitive one | `include_dir`, `include_exclude` | `include` |
-| Library sources | the library's own compiled sources | `source_dir` | `src` |
+| Library sources | the library's own compiled sources | `src_dir` | `src` |
 | Test sources | the test tree | `test_dir` | `test` |
+
+Each input is named for the directory it defaults to, which also keeps
+`src_dir` clear of CMake's own `CMAKE_SOURCE_DIR` — that one means the project
+root, not `src`.
 
 The three directory passes work the same way: the pass runs over whatever the
 compile database already holds under that directory. A directory that is not
