@@ -37,23 +37,54 @@ on:
         type: string
         required: false
         default: x64-linux
-      header_dir:
-        description: Public headers, each also checked as a primary input.
+      include_dir:
+        description: >
+          Public headers, each also checked as a primary input. Named for the
+          directory a CMake project conventionally puts them in.
         type: string
         required: false
         default: include
-      header_exclude:
+      include_exclude:
         description: find -path pattern for headers to skip, or empty for none.
         type: string
         required: false
         default: ""
+      header_exclude:
+        description: >
+          Deprecated alias for include_exclude, honoured when that is empty so
+          a caller's existing stub keeps working across the rename.
+        type: string
+        required: false
+        default: ""
+      src_dir:
+        description: >
+          The library's own compiled sources. Analysed straight from the
+          compile database when the directory is there, so a library with
+          sources needs nothing configured and one without has nothing to skip
+          past. Empty disables the pass.
+        type: string
+        required: false
+        default: src
+      test_dir:
+        description: >
+          The test tree, analysed the same way and on the same terms as
+          src_dir. Supersedes sources_regex.
+        type: string
+        required: false
+        default: test
       self_sufficiency_regex:
-        description: run-clang-tidy pattern for the generated per-header units.
+        description: >
+          run-clang-tidy pattern for the generated per-header units. The one
+          pass that cannot be a directory: those units live in the build tree,
+          under a path only the caller's CMake knows, so there is no
+          convention to discover them by.
         type: string
         required: false
         default: ""
       sources_regex:
-        description: run-clang-tidy pattern for the test sources.
+        description: >
+          Deprecated. An explicit run-clang-tidy pattern for the test tree,
+          honoured in place of test_dir when set.
         type: string
         required: false
         default: ""
@@ -209,16 +240,72 @@ jobs:
           echo "Dialect from the build: $std"
           echo "CXX_STD=$std" >> "$GITHUB_ENV"
 
+      # One place decides what each compile-database pass runs over, so the
+      # three of them cannot drift in how they resolve a directory or in what
+      # they do when there is nothing there.
+      - name: Resolve the trees to analyse
+        shell: bash
+        env:
+          SRC_DIR: ${{ inputs.src_dir }}
+          TEST_DIR: ${{ inputs.test_dir }}
+          SOURCES_REGEX: ${{ inputs.sources_regex }}
+          SELF_SUFFICIENCY_REGEX: ${{ inputs.self_sufficiency_regex }}
+        run: |
+          set -euo pipefail
+
+          # .file may be relative to .directory, so resolve before matching.
+          # Without this a pass would silently do nothing wherever CMake emits
+          # the relative form, which looks exactly like success.
+          mapfile -t entries < <(jq -r '.[] |
+            if (.file | startswith("/")) then .file
+            else .directory + "/" + .file end' build/compile_commands.json)
+
+          covered() {
+            local entry
+            for entry in "${entries[@]}"; do
+              case "$entry" in "$1"*) return 0 ;; esac
+            done
+            return 1
+          }
+
+          # $1 env name, $2 label, $3 directory, $4 explicit pattern
+          resolve() {
+            local var=$1 label=$2 dir=$3 override=$4 abs
+            if [ -n "$override" ]; then
+              echo "$label: explicit pattern, $override"
+              echo "$var=$override" >> "$GITHUB_ENV"
+            elif [ -z "$dir" ]; then
+              echo "$label: disabled, the directory input is empty"
+            elif [ ! -d "$dir" ]; then
+              echo "$label: no '$dir' directory"
+            else
+              # Absolute, because run-clang-tidy matches the compile
+              # database's own paths; with the trailing slash, so the pattern
+              # cannot anchor on a sibling whose name merely starts the same.
+              abs="$(cd "$dir" && pwd)/"
+              if covered "$abs"; then
+                echo "$label: $abs.*"
+                echo "$var=$abs.*" >> "$GITHUB_ENV"
+              else
+                echo "$label: '$dir' has no compile database entry under it"
+              fi
+            fi
+          }
+
+          resolve TIDY_GENERATED "Generated per-header units" "" "$SELF_SUFFICIENCY_REGEX"
+          resolve TIDY_SOURCE    "Library sources"            "$SRC_DIR" ""
+          resolve TIDY_TEST      "Test sources"               "$TEST_DIR"   "$SOURCES_REGEX"
+
       # The public headers, through the generated self-sufficiency units.
       # "shell: bash" for the -o pipefail, without which tee's status wins.
       - name: Run clang-tidy over the public headers
-        if: inputs.self_sufficiency_regex != ''
+        if: env.TIDY_GENERATED != ''
         shell: bash
         env:
           VERSION: ${{ matrix.version }}
-          PATTERN: ${{ inputs.self_sufficiency_regex }}
         run: |
-          "run-clang-tidy-${VERSION}" -quiet -p build "$PATTERN" 2>&1 | tee clang-tidy-report.txt
+          "run-clang-tidy-${VERSION}" -quiet -p build "$TIDY_GENERATED" 2>&1 \
+            | tee clang-tidy-report.txt
 
       # Each header as the primary input too, so misc-include-cleaner can tell
       # a direct include from a transitive one. Aggregates carry IWYU pragmas.
@@ -226,8 +313,8 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ matrix.version }}
-          HEADER_DIR: ${{ inputs.header_dir }}
-          HEADER_EXCLUDE: ${{ inputs.header_exclude }}
+          HEADER_DIR: ${{ inputs.include_dir }}
+          HEADER_EXCLUDE: ${{ inputs.include_exclude || inputs.header_exclude }}
           ADAPTED_DIRS: ${{ inputs.adapted_dirs }}
         run: |
           # read -ra, for the reason given in coverage.yml: an unquoted
@@ -251,15 +338,27 @@ jobs:
               -x c++-header "$CXX_STD" -I"$HEADER_DIR" "${adapted[@]}"
           done 2>&1 | tee -a clang-tidy-report.txt
 
-      # A separate pass so a finding names the tree whose rulebook it came from.
-      - name: Run clang-tidy over the test sources
-        if: inputs.sources_regex != ''
+      # Discovered rather than configured: the compile database already knows
+      # every translation unit the build has, so a caller with sources gets
+      # them analysed without naming a pattern.
+      - name: Run clang-tidy over the library sources
+        if: env.TIDY_SOURCE != ''
         shell: bash
         env:
           VERSION: ${{ matrix.version }}
-          PATTERN: ${{ inputs.sources_regex }}
         run: |
-          "run-clang-tidy-${VERSION}" -quiet -p build "$PATTERN" 2>&1 | tee -a clang-tidy-report.txt
+          "run-clang-tidy-${VERSION}" -quiet -p build "$TIDY_SOURCE" 2>&1 \
+            | tee -a clang-tidy-report.txt
+
+      # A separate pass so a finding names the tree whose rulebook it came from.
+      - name: Run clang-tidy over the test sources
+        if: env.TIDY_TEST != ''
+        shell: bash
+        env:
+          VERSION: ${{ matrix.version }}
+        run: |
+          "run-clang-tidy-${VERSION}" -quiet -p build "$TIDY_TEST" 2>&1 \
+            | tee -a clang-tidy-report.txt
 
       - name: Publish clang-tidy summary
         if: always()

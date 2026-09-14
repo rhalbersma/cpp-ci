@@ -4,10 +4,10 @@
 [![Actionlint](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml/badge.svg)](https://github.com/rhalbersma/cpp-ci/actions/workflows/actionlint.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/rhalbersma/cpp-ci/badge)](https://scorecard.dev/viewer/?uri=github.com/rhalbersma/cpp-ci)
 
-Shared GitHub Actions workflows for header-only C++ libraries built with CMake,
-whose test dependencies come from a `vcpkg.json` manifest and whose tests are
-registered with CTest. Calling repositories keep a thin stub per workflow and
-no CI logic of their own.
+Shared GitHub Actions workflows for C++ libraries built with CMake, whose
+dependencies come from a `vcpkg.json` manifest and whose tests are registered
+with CTest. Calling repositories keep a thin stub per workflow and no CI logic
+of their own.
 
 CMake is the hard requirement, and it goes deeper than driving the build:
 `cxx_flags` reaches the compiler as `CMAKE_CXX_FLAGS`, the Release and Debug
@@ -17,6 +17,13 @@ CMake's own. A **test framework** is not a requirement and is named nowhere
 here: a leg runs `vcpkg install` in manifest mode and then `ctest`, so
 Boost.Test, Catch2 and GoogleTest all work, and swapping one for another needs
 no change on this side.
+
+**Header-only** is not a requirement either. A leg configures, builds and
+tests whatever the CMake project defines, compiled artifacts included, and
+nothing here inspects a target's type. [Static analysis](#static-analysis)
+takes the library's own sources from the compile database when there are any,
+so a library with compiled sources needs no more configuration than one
+without.
 
 The term is meant in the broad sense: not unit testing alone, but every check
 a change should survive before it merges.
@@ -392,6 +399,33 @@ toolchain; its extractor runs front-end side, so that rung is also the standard
 library the analysis sees. `clang-tidy.yml` configures a compile database and
 never builds the library, which is why it appears under that line in the table
 above.
+
+`clang-tidy.yml` makes four passes, and three of them are named by a directory
+rather than a pattern — the same three a CMake project already has:
+
+| Pass | What it covers | Input | Default |
+| :--- | :------------- | :---- | :------ |
+| Generated per-header units | the self-sufficiency translation units the caller's CMake generates | `self_sufficiency_regex` | — |
+| Direct header dependencies | each header again as a primary input, so `misc-include-cleaner` can tell a direct include from a transitive one | `include_dir`, `include_exclude` | `include` |
+| Library sources | the library's own compiled sources | `src_dir` | `src` |
+| Test sources | the test tree | `test_dir` | `test` |
+
+Each input is named for the directory it defaults to, which also keeps
+`src_dir` clear of CMake's own `CMAKE_SOURCE_DIR` — that one means the project
+root, not `src`.
+
+The three directory passes work the same way: the pass runs over whatever the
+compile database already holds under that directory. A directory that is not
+there prints a line and the pass is skipped, so a header-only library has
+nothing to opt out of; a library keeping its sources elsewhere names the
+directory; and `""` disables a pass outright.
+
+The first pass is the exception, and has to be. Those units are generated into
+the **build** tree, under a path only the caller's own CMake knows, so there is
+no convention to discover them by and the pattern stays a caller's to give.
+`sources_regex` is kept as an explicit override for the test pass, and
+`header_exclude` as an alias for `include_exclude`, so an existing stub keeps
+working; neither is needed in a new one.
 
 ### Consumability
 
