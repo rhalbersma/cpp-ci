@@ -67,12 +67,28 @@ A manifest is required either way: every leg that configures the library runs
 missing `vcpkg.json`. A library with nothing much to declare still needs the
 file.
 
-Put the test-only dependencies behind a feature, with `default-features`
-naming it, so a tests-off configure does not need them. That is why
-[`consumption.yml`](#consumability) defaults `vcpkg: false` — it configures
-with `-DBUILD_TESTING=OFF`, which normally leaves a header-only library needing
-nothing at all. A library whose own headers `find_package(... REQUIRED)`
-something passes `vcpkg: true`.
+Put the test-only dependencies behind a feature, so a tests-off configure does
+not need them. There are two ways to have that feature installed here, and they
+differ in what a *consumer* of the package resolves rather than in what CI does:
+
+| The manifest says | The caller passes | A consumer resolving the manifest gets |
+| :---------------- | :---------------- | :------------------------------------- |
+| `default-features` names the feature | nothing | the test dependencies too |
+| no default features | `vcpkg_features: <name>` | nothing |
+
+The second is what a header-only library with no dependency of its own wants:
+`default-features` naming a `test` feature means an ordinary manifest-mode
+install resolves Boost for someone who only ever includes a header. The input
+is comma-separated and reaches both halves of a leg — the `vcpkg install` step
+and `VCPKG_MANIFEST_FEATURES` on the configure line — so the binary cache is
+warmed for what the build then asks for. It is additive either way: the default
+features install regardless, so a caller naming nothing is unaffected.
+
+Either way [`consumption.yml`](#consumability) defaults `vcpkg: false` — it
+configures with `-DBUILD_TESTING=OFF`, which normally leaves a header-only
+library needing nothing at all, and it takes no `vcpkg_features` for that same
+reason. A library whose own headers `find_package(... REQUIRED)` something
+passes `vcpkg: true`.
 
 The `FetchContent` fallback needs care on exactly one leg. `install(EXPORT)`
 cannot export a FetchContent build tree, so the `find_package` consumption

@@ -45,6 +45,14 @@ on:
         type: string
         required: false
         default: arm64-osx
+      vcpkg_features:
+        description: >
+          Comma-separated manifest features to install, for a manifest that
+          keeps its test-only dependencies out of default-features. Additive:
+          the default features install either way.
+        type: string
+        required: false
+        default: ""
       cxx_flags:
         description: Extra flags for the caller.
         type: string
@@ -64,7 +72,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           mode: matrix
           toolchain: apple-clang
@@ -113,9 +121,10 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
+          features: ${{ inputs.vcpkg_features }}
 
       # Keyed on the archives' contents: an unconditional save would add an
       # entry per run and evict this repo's other caches.
@@ -138,9 +147,17 @@ jobs:
           CXX_FLAGS: ${{ inputs.cxx_flags }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          FEATURES: ${{ inputs.vcpkg_features }}
         run: |
           set -euo pipefail
           read -ra extra <<< "$EXTRA_CMAKE"
+          # A CMake list, so the separator is a semicolon rather than a
+          # comma. Left empty when the caller named no feature, so the
+          # configure line stays the one it has always been.
+          features_arg=""
+          if [ -n "$FEATURES" ]; then
+            features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
+          fi
           # The macOS runners' /bin/bash is 3.2, where expanding an empty
           # array under set -u is an unbound-variable error rather than zero
           # words. cmake_args is empty for every caller that does not set it,
@@ -153,6 +170,7 @@ jobs:
             -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            ${features_arg:+"$features_arg"} \
             ${extra[@]+"${extra[@]}"}
 
       - name: Build

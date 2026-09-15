@@ -65,6 +65,14 @@ on:
         type: string
         required: false
         default: x64-windows
+      vcpkg_features:
+        description: >
+          Comma-separated manifest features to install, for a manifest that
+          keeps its test-only dependencies out of default-features. Additive:
+          the default features install either way.
+        type: string
+        required: false
+        default: ""
       cmake_args:
         description: Extra -D arguments for the configure step.
         type: string
@@ -79,7 +87,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           mode: matrix
           toolchain: msvc
@@ -112,7 +120,7 @@ jobs:
       - name: Install the MSVC Preview toolset
         if: matrix.preview_channel == 'true'
         id: preview
-        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@63918a6a6e6732c7f2eee27be7173a472d6f792a
 
       - name: Report toolchain versions
         shell: pwsh
@@ -149,9 +157,10 @@ jobs:
       # MSVC has been binary compatible across toolsets since VS 2015, so
       # dependencies built on the stable leg link against the preview leg too.
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
+          features: ${{ inputs.vcpkg_features }}
 
       # Keyed on the archives' contents: an unconditional save would add an
       # entry per run and evict this repo's other caches.
@@ -173,6 +182,7 @@ jobs:
           TOOLSET: ${{ inputs.toolset }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          FEATURES: ${{ inputs.vcpkg_features }}
         run: |
           # -split, then @extra: PowerShell would otherwise pass the whole
           # string as one argument. Empty contributes no argument at all.
@@ -180,11 +190,19 @@ jobs:
           if ($env:EXTRA_CMAKE) {
             $extra = $env:EXTRA_CMAKE -split '\s+' | Where-Object { $_ }
           }
+          # A CMake list, so the separator is a semicolon rather than a comma.
+          # Empty contributes no argument, as @extra does.
+          $features = @()
+          if ($env:FEATURES) {
+            $names = $env:FEATURES -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+            $features = @("-DVCPKG_MANIFEST_FEATURES=$($names -join ';')")
+          }
           cmake -S . -B build `
             -G "${env:GENERATOR}" -A x64 `
             -T "${env:TOOLSET}" `
             "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=${env:TRIPLET}" `
+            @features `
             @extra
 
       # CMake cannot be told "version=Preview", so the number the install
@@ -198,6 +216,7 @@ jobs:
           PREVIEW_PREFIX: ${{ inputs.preview_toolset_prefix }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          FEATURES: ${{ inputs.vcpkg_features }}
         run: |
           # -split, then @extra: PowerShell would otherwise pass the whole
           # string as one argument. Empty contributes no argument at all.
@@ -205,11 +224,19 @@ jobs:
           if ($env:EXTRA_CMAKE) {
             $extra = $env:EXTRA_CMAKE -split '\s+' | Where-Object { $_ }
           }
+          # A CMake list, so the separator is a semicolon rather than a comma.
+          # Empty contributes no argument, as @extra does.
+          $features = @()
+          if ($env:FEATURES) {
+            $names = $env:FEATURES -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+            $features = @("-DVCPKG_MANIFEST_FEATURES=$($names -join ';')")
+          }
           cmake -S . -B build `
             -G "${env:GENERATOR}" -A x64 `
             -T "${env:PREVIEW_PREFIX}version=${env:PREVIEW_TOOLSET},host=x64" `
             "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=${env:TRIPLET}" `
+            @features `
             @extra
 
       - name: Build
