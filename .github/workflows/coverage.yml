@@ -27,6 +27,14 @@ on:
         type: string
         required: false
         default: x64-linux
+      vcpkg_features:
+        description: >
+          Comma-separated manifest features to install, for a manifest that
+          keeps its test-only dependencies out of default-features. Additive:
+          the default features install either way.
+        type: string
+        required: false
+        default: ""
       exclude:
         description: >
           Space-separated gcovr --exclude patterns. The default keeps the
@@ -62,11 +70,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@e2886b13f6fcd1eceb231652f816b016de41be1d
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@63918a6a6e6732c7f2eee27be7173a472d6f792a
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -80,13 +88,13 @@ jobs:
           exit 1
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
 
       - name: Install gcovr
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@63918a6a6e6732c7f2eee27be7173a472d6f792a
 
       - name: Name the toolchain
         env:
@@ -117,9 +125,10 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
+          features: ${{ inputs.vcpkg_features }}
 
       # Keyed on the archives' contents: an unconditional save would add an
       # entry per run and evict this repo's other caches.
@@ -138,9 +147,17 @@ jobs:
         env:
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          FEATURES: ${{ inputs.vcpkg_features }}
         run: |
           set -euo pipefail
           read -ra extra <<< "$EXTRA_CMAKE"
+          # A CMake list, so the separator is a semicolon rather than a
+          # comma. Left empty when the caller named no feature, so the
+          # configure line stays the one it has always been.
+          features_arg=""
+          if [ -n "$FEATURES" ]; then
+            features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
+          fi
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
@@ -149,6 +166,7 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="--coverage" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            ${features_arg:+"$features_arg"} \
             "${extra[@]}"
 
       - name: Build

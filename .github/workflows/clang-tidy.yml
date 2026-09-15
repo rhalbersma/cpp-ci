@@ -37,6 +37,14 @@ on:
         type: string
         required: false
         default: x64-linux
+      vcpkg_features:
+        description: >
+          Comma-separated manifest features to install, for a manifest that
+          keeps its test-only dependencies out of default-features. Additive:
+          the default features install either way.
+        type: string
+        required: false
+        default: ""
       include_dir:
         description: >
           Public headers, each also checked as a primary input. Named for the
@@ -116,7 +124,7 @@ jobs:
       # building, and Debug is the configuration it is read from, for the
       # reason the Configure step gives.
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           mode: matrix
           toolchain: clang
@@ -138,11 +146,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@e2886b13f6fcd1eceb231652f816b016de41be1d
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@63918a6a6e6732c7f2eee27be7173a472d6f792a
 
       - name: Resolve the GCC supplying libstdc++
         id: libstdcxx
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -150,14 +158,14 @@ jobs:
       # A known-good libstdc++ for the standard library Clang compiles
       # against; the binaries are not wanted, only the headers.
       - name: Install the libstdc++
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           version: ${{ steps.libstdcxx.outputs.version }}
           trunk: ${{ steps.libstdcxx.outputs.trunk }}
           symlink_binaries: "false"
 
       - name: Install Clang and clang-tidy
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           version: ${{ matrix.version }}
           llvm_suffix: ${{ matrix.llvm_suffix }}
@@ -189,9 +197,10 @@ jobs:
       # Only so the test tree configures, and with it the compile database
       # below; clang-tidy itself never links anything.
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
+          features: ${{ inputs.vcpkg_features }}
 
       # Keyed on the archives' contents: an unconditional save would add an
       # entry per run and evict this repo's other caches.
@@ -212,9 +221,17 @@ jobs:
         env:
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          FEATURES: ${{ inputs.vcpkg_features }}
         run: |
           set -euo pipefail
           read -ra extra <<< "$EXTRA_CMAKE"
+          # A CMake list, so the separator is a semicolon rather than a
+          # comma. Left empty when the caller named no feature, so the
+          # configure line stays the one it has always been.
+          features_arg=""
+          if [ -n "$FEATURES" ]; then
+            features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
+          fi
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
@@ -222,6 +239,7 @@ jobs:
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            ${features_arg:+"$features_arg"} \
             "${extra[@]}"
 
       # Read from the compile database rather than stated here. The header

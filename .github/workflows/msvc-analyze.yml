@@ -54,6 +54,14 @@ on:
         type: string
         required: false
         default: x64-windows
+      vcpkg_features:
+        description: >
+          Comma-separated manifest features to install, for a manifest that
+          keeps its test-only dependencies out of default-features. Additive:
+          the default features install either way.
+        type: string
+        required: false
+        default: ""
       cache_prefix:
         description: Distinguishes this caller's vcpkg cache from the others'.
         type: string
@@ -93,7 +101,7 @@ jobs:
       # is what reports them: VS 2026 wants the newer image and VS 2022 the
       # older one, so each leg carries its own runner.
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           mode: matrix
           toolchain: msvc
@@ -138,7 +146,7 @@ jobs:
       - name: Install the MSVC Preview toolset
         if: matrix.preview_channel == 'true'
         id: preview
-        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@63918a6a6e6732c7f2eee27be7173a472d6f792a
 
       - name: Report toolchain versions
         shell: pwsh
@@ -171,9 +179,10 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
+          features: ${{ inputs.vcpkg_features }}
 
       - name: Save vcpkg binary cache
         if: >-
@@ -197,6 +206,7 @@ jobs:
           GENERATOR: ${{ matrix.generator }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          FEATURES: ${{ inputs.vcpkg_features }}
           # Composed here rather than in a step that writes GITHUB_ENV: an
           # expression in env: is passed to the process, never substituted
           # into a script, so there is nothing to inject into. /analyze:external-
@@ -212,6 +222,13 @@ jobs:
           set -euo pipefail
           echo "Analysis flags: $ANALYZE_FLAGS"
           read -ra extra <<< "$EXTRA_CMAKE"
+          # A CMake list, so the separator is a semicolon rather than a
+          # comma. Left empty when the caller named no feature, so the
+          # configure line stays the one it has always been.
+          features_arg=""
+          if [ -n "$FEATURES" ]; then
+            features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
+          fi
           # CXXFLAGS, not -DCMAKE_CXX_FLAGS. CMake seeds CMAKE_CXX_FLAGS from
           # CMAKE_CXX_FLAGS_INIT and this variable, so the platform's own flags
           # survive; setting the cache entry on the command line replaces them.
@@ -223,6 +240,7 @@ jobs:
             -G "$GENERATOR" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            ${features_arg:+"$features_arg"} \
             "${extra[@]}"
 
       - name: Configure (preview toolset)
@@ -233,6 +251,7 @@ jobs:
           TOOLSET: ${{ steps.preview.outputs.toolset }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          FEATURES: ${{ inputs.vcpkg_features }}
           # Composed here rather than in a step that writes GITHUB_ENV: an
           # expression in env: is passed to the process, never substituted
           # into a script, so there is nothing to inject into. /analyze:external-
@@ -248,6 +267,13 @@ jobs:
           set -euo pipefail
           echo "Analysis flags: $ANALYZE_FLAGS"
           read -ra extra <<< "$EXTRA_CMAKE"
+          # A CMake list, so the separator is a semicolon rather than a
+          # comma. Left empty when the caller named no feature, so the
+          # configure line stays the one it has always been.
+          features_arg=""
+          if [ -n "$FEATURES" ]; then
+            features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
+          fi
           # CXXFLAGS rather than the cache entry, for the reason the
           # non-preview Configure gives.
           export CXXFLAGS="$ANALYZE_FLAGS"
@@ -268,6 +294,7 @@ jobs:
             -T "version=$TOOLSET,host=x64" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            ${features_arg:+"$features_arg"} \
             "${extra[@]}"
 
       # The analysis is the compile, so this step is the check. "shell: bash"

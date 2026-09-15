@@ -74,6 +74,14 @@ on:
         type: string
         required: false
         default: x64-linux-libcxx
+      vcpkg_features:
+        description: >
+          Comma-separated manifest features to install, for a manifest that
+          keeps its test-only dependencies out of default-features. Additive:
+          the default features install either way.
+        type: string
+        required: false
+        default: ""
       cxx_flags:
         description: Flags appended after the sanitizer's own, for the caller.
         type: string
@@ -99,7 +107,7 @@ jobs:
       legs: ${{ steps.cross.outputs.matrix }}
     steps:
       - id: gcc
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           mode: matrix
           toolchain: gcc
@@ -108,7 +116,7 @@ jobs:
           reduce_on_pr: ${{ inputs.reduce_on_pr }}
 
       - id: clang
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           mode: matrix
           toolchain: clang
@@ -121,7 +129,7 @@ jobs:
       # and a deliberate no-op for a caller that named none.
       - id: libcxx
         if: inputs.libcxx_tiers != ''
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           mode: matrix
           toolchain: clang
@@ -214,13 +222,13 @@ jobs:
       # relative reference resolves against the caller's workspace, which
       # holds the caller's checkout and none of this. The pin keeps a caller's
       # pinned workflow from silently pulling actions off a moving main.
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@e2886b13f6fcd1eceb231652f816b016de41be1d
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@63918a6a6e6732c7f2eee27be7173a472d6f792a
 
       # On the Clang legs this is the paired libstdc++ rather than a compiler.
       # The libc++ leg skips it: libc++ replaces libstdc++, which is its point.
       - name: Install GCC
         if: matrix.libcxx != true
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           version: ${{ matrix.family == 'gcc' && matrix.version || matrix.gcc_version }}
           trunk: ${{ matrix.family == 'gcc' && matrix.trunk || matrix.gcc_trunk }}
@@ -228,7 +236,7 @@ jobs:
 
       - name: Install Clang
         if: matrix.family == 'clang'
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           version: ${{ matrix.version }}
           llvm_suffix: ${{ matrix.llvm_suffix }}
@@ -239,7 +247,7 @@ jobs:
       # test. See the naming step below for what went wrong without them.
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@63918a6a6e6732c7f2eee27be7173a472d6f792a
 
       # Named once here rather than in every expression below, and the cache
       # key with them: it has to name the rung, or a tier change would restore
@@ -350,9 +358,10 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@e2886b13f6fcd1eceb231652f816b016de41be1d
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@63918a6a6e6732c7f2eee27be7173a472d6f792a
         with:
           triplet: ${{ env.VCPKG_TRIPLET }}
+          features: ${{ inputs.vcpkg_features }}
           overlay_triplets: ${{ steps.overlay.outputs.triplets }}
 
       # Keyed on the archives' contents: an unconditional save would add an
@@ -381,10 +390,18 @@ jobs:
           CXX_FLAGS: ${{ inputs.cxx_flags }}
           OVERLAY_TRIPLETS: ${{ steps.overlay.outputs.triplets }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          FEATURES: ${{ inputs.vcpkg_features }}
         shell: bash
         run: |
           set -euo pipefail
           read -ra extra <<< "$EXTRA_CMAKE"
+          # A CMake list, so the separator is a semicolon rather than a
+          # comma. Left empty when the caller named no feature, so the
+          # configure line stays the one it has always been.
+          features_arg=""
+          if [ -n "$FEATURES" ]; then
+            features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
+          fi
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
@@ -393,6 +410,7 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="$SANITIZER_FLAGS" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
+            ${features_arg:+"$features_arg"} \
             -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
             "${extra[@]}"
 

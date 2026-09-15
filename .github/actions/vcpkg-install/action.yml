@@ -21,6 +21,14 @@ inputs:
     description: Directory of overlay triplets, if the triplet is one.
     required: false
     default: ""
+  features:
+    description: >
+      Comma-separated manifest features to install, for a manifest that keeps
+      its test-only dependencies out of default-features. Additive: the
+      default features install either way, so naming none is what this action
+      always did.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -34,6 +42,7 @@ runs:
       env:
         TRIPLET: ${{ inputs.triplet }}
         OVERLAY_TRIPLETS: ${{ inputs.overlay_triplets }}
+        FEATURES: ${{ inputs.features }}
       run: |
         set -euo pipefail
         mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
@@ -41,6 +50,17 @@ runs:
         args=(install --triplet "$TRIPLET")
         if [ -n "$OVERLAY_TRIPLETS" ]; then
           args+=(--overlay-triplets "$OVERLAY_TRIPLETS")
+        fi
+
+        # One --x-feature per name. A feature name has no whitespace in it, so
+        # the separator is stripped rather than parsed around.
+        if [ -n "$FEATURES" ]; then
+          IFS=',' read -ra names <<< "$(printf '%s' "$FEATURES" | tr -d '[:space:]')"
+          for name in "${names[@]}"; do
+            if [ -n "$name" ]; then
+              args+=("--x-feature=$name")
+            fi
+          done
         fi
 
         # Three attempts, backing off. A port that genuinely fails to build
@@ -61,6 +81,7 @@ runs:
       env:
         TRIPLET: ${{ inputs.triplet }}
         OVERLAY_TRIPLETS: ${{ inputs.overlay_triplets }}
+        FEATURES: ${{ inputs.features }}
       run: |
         # So a non-zero exit from vcpkg sets LASTEXITCODE for the loop to read
         # rather than terminating the step on the first attempt.
@@ -70,6 +91,13 @@ runs:
         $vcpkgArgs = @('install', '--triplet', $env:TRIPLET)
         if ($env:OVERLAY_TRIPLETS) {
           $vcpkgArgs += @('--overlay-triplets', $env:OVERLAY_TRIPLETS)
+        }
+
+        # One --x-feature per name, as the bash half above.
+        if ($env:FEATURES) {
+          foreach ($name in ($env:FEATURES -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+            $vcpkgArgs += "--x-feature=$name"
+          }
         }
 
         foreach ($i in 1..3) {
