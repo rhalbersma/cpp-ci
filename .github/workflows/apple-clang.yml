@@ -63,6 +63,14 @@ on:
         type: string
         required: false
         default: ""
+      generator:
+        description: >
+          CMake generator for the configure step. Ninja is what the runner
+          images carry and what C++20 modules require; a caller needing the
+          platform default names it here.
+        type: string
+        required: false
+        default: Ninja
 
 jobs:
   ladder:
@@ -147,6 +155,7 @@ jobs:
           CXX_FLAGS: ${{ inputs.cxx_flags }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          GENERATOR: ${{ inputs.generator }}
           FEATURES: ${{ inputs.vcpkg_features }}
         run: |
           set -euo pipefail
@@ -166,6 +175,7 @@ jobs:
           # reached at all. The ${x[@]+...} form expands to nothing when the
           # array is unset and to the same words when it is not.
           cmake -S . -B build \
+            -G "$GENERATOR" \
             -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \

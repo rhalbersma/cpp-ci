@@ -68,6 +68,14 @@ on:
         type: string
         required: false
         default: ""
+      generator:
+        description: >
+          CMake generator for every configure step here. Ninja is what the
+          runner images carry and what C++20 modules require; a caller needing
+          the platform default names it here.
+        type: string
+        required: false
+        default: Ninja
 
 jobs:
   consume:
@@ -193,6 +201,7 @@ jobs:
         if: inputs.dependency_repos != ''
         env:
           DEPENDENCY_REPOS: ${{ inputs.dependency_repos }}
+          GENERATOR: ${{ inputs.generator }}
         run: |
           set -euo pipefail
           prefix="$GITHUB_WORKSPACE/deps-prefix"
@@ -214,6 +223,7 @@ jobs:
             # Earlier dependencies are on the prefix path, so a chain of them
             # resolves in the order the caller listed them.
             cmake -S "$src" -B "dep-build-$n" \
+              -G "$GENERATOR" \
               -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
               -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
               -DCMAKE_PREFIX_PATH="$prefix" \
@@ -316,12 +326,14 @@ jobs:
       - name: Configure
         env:
           CALLER_CMAKE_ARGS: ${{ inputs.cmake_args }}
+          GENERATOR: ${{ inputs.generator }}
         run: |
           set -euo pipefail
           read -ra library <<< "${LIBRARY_VCPKG_ARGS:-}"
           read -ra deps <<< "${DEPS_CMAKE_ARGS:-}"
           read -ra caller <<< "$CALLER_CMAKE_ARGS"
           cmake -S . -B build \
+            -G "$GENERATOR" \
             -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
             -DBUILD_TESTING=OFF \
@@ -334,9 +346,11 @@ jobs:
         if: hashFiles(format('{0}/find_package/CMakeLists.txt', inputs.consumer_dir)) != ''
         env:
           CONSUMER_DIR: ${{ inputs.consumer_dir }}
+          GENERATOR: ${{ inputs.generator }}
         run: |
           set -euo pipefail
           cmake -S "$CONSUMER_DIR/find_package" -B build-find-package \
+            -G "$GENERATOR" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
             -DCMAKE_PREFIX_PATH="$CONSUMER_PREFIX_PATH"
           cmake --build build-find-package -v
@@ -346,10 +360,12 @@ jobs:
         if: hashFiles(format('{0}/add_subdirectory/CMakeLists.txt', inputs.consumer_dir)) != ''
         env:
           CONSUMER_DIR: ${{ inputs.consumer_dir }}
+          GENERATOR: ${{ inputs.generator }}
         run: |
           set -euo pipefail
           read -ra prefix <<< "${SOURCE_CONSUMER_ARGS:-}"
           cmake -S "$CONSUMER_DIR/add_subdirectory" -B build-add-subdirectory \
+            -G "$GENERATOR" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
             "${prefix[@]}"
           cmake --build build-add-subdirectory -v
@@ -359,10 +375,12 @@ jobs:
         if: hashFiles(format('{0}/fetch_content/CMakeLists.txt', inputs.consumer_dir)) != ''
         env:
           CONSUMER_DIR: ${{ inputs.consumer_dir }}
+          GENERATOR: ${{ inputs.generator }}
         run: |
           set -euo pipefail
           read -ra prefix <<< "${SOURCE_CONSUMER_ARGS:-}"
           cmake -S "$CONSUMER_DIR/fetch_content" -B build-fetch-content \
+            -G "$GENERATOR" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
             "${prefix[@]}"
           cmake --build build-fetch-content -v
