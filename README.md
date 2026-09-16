@@ -14,17 +14,20 @@ CMake is the hard requirement, and it goes deeper than driving the build:
 `cxx_flags` reaches the compiler as `CMAKE_CXX_FLAGS`, the Release and Debug
 legs are `CMAKE_BUILD_TYPE`, `clang-tidy.yml` needs the compile database
 `CMAKE_EXPORT_COMPILE_COMMANDS` writes, and the three consumption models are
-CMake's own. A **test framework** is not a requirement and is named nowhere
-here: a leg runs `vcpkg install` in manifest mode and then `ctest`, so
-Boost.Test, Catch2 and GoogleTest all work, and swapping one for another needs
-no change on this side.
+CMake's own.
 
-**Header-only** is not a requirement either. A leg configures, builds and
-tests whatever the CMake project defines, compiled artifacts included, and
-nothing here inspects a target's type. [Static analysis](#static-analysis)
-takes the library's own sources from the compile database when there are any,
-so a library with compiled sources needs no more configuration than one
-without.
+Two things are the caller's to choose, and this side is indifferent to both.
+
+The **shape of the library** — header-only, or headers with compiled sources.
+A leg configures, builds and tests whatever the CMake project defines, and
+[static analysis](#static-analysis) reads the library's own sources from the
+compile database, so compiled sources need no configuration that a header-only
+library does not.
+
+The **test framework** — Boost.Test, GoogleTest, Catch2. A leg runs
+`vcpkg install` in manifest mode and then `ctest`, so the framework is a line
+in the caller's `vcpkg.json` and its own CMake; swapping one for another
+changes nothing here.
 
 The term is meant in the broad sense: not unit testing alone, but every check
 a change should survive before it merges.
