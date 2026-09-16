@@ -241,8 +241,15 @@ jobs:
           if [ -n "$FEATURES" ]; then
             features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
           fi
+          # This job configures and never builds, so nothing generates the
+          # module map files that CMake's scanner names in the compile
+          # database as @<target>.dir/<source>.o.modmap. clang-tidy replays
+          # each entry verbatim and every translation unit then fails on a
+          # response file that was never written. Scanning buys this job
+          # nothing either way -- clang-tidy reads sources, not BMIs.
           cmake -S . -B build \
             -G "$GENERATOR" \
+            -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
