@@ -194,9 +194,17 @@ jobs:
         run: |
           # -split, then @extra: PowerShell would otherwise pass the whole
           # string as one argument. Empty contributes no argument at all.
+          #
+          # @( ) around the pipeline, and it is load-bearing. A pipeline yielding
+          # ONE object assigns that object, not a one-element array -- so a caller
+          # passing a single -D argument left $extra a [string], and splatting a
+          # string enumerates it. cmake then received one character per argument
+          # and answered "Unknown argument -". At two or more arguments the split
+          # already yields an Object[] and the splat is what it looks like, which
+          # is why this went unseen: no caller had passed exactly one.
           $extra = @()
           if ($env:EXTRA_CMAKE) {
-            $extra = $env:EXTRA_CMAKE -split '\s+' | Where-Object { $_ }
+            $extra = @($env:EXTRA_CMAKE -split '\s+' | Where-Object { $_ })
           }
           # A CMake list, so the separator is a semicolon rather than a comma.
           # Empty contributes no argument, as @extra does.
