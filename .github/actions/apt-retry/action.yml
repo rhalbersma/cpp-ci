@@ -11,8 +11,22 @@ description: >
   the install on the first attempt, which is how one Launchpad brownout
   reddened three required legs. Run once per job, before any install action.
 
+  Retries do not cover a 4xx, and one source failing its index fails the whole
+  apt-get update. The image ships packages.microsoft.com, which nothing here
+  installs from, and a 403 from it ended a Clang install whose own repository
+  answered fine. So drop that source before any install action updates.
+
 runs:
   using: composite
   steps:
     - shell: bash
       run: echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/99-retries > /dev/null
+    - shell: bash
+      run: |
+        set -euo pipefail
+        # One-line .list and deb822 .sources files alike, whichever the image uses.
+        sources=$(grep -l 'packages\.microsoft\.com' /etc/apt/sources.list.d/* 2>/dev/null || true)
+        if [ -n "$sources" ]; then
+          echo "$sources"
+          echo "$sources" | xargs sudo rm -f --
+        fi

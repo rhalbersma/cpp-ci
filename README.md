@@ -611,7 +611,7 @@ caller rather than this repository.
 | Action | Purpose |
 | :----- | :------ |
 | `toolchain` | Resolve rungs to compilers: one rung, or a whole strategy matrix |
-| `apt-retry` | Set the retry key apt actually reads, once per job |
+| `apt-retry` | Set the retry key apt actually reads, and drop the image's unused Microsoft source, once per job |
 | `install-gcc` | A GCC release from the toolchain PPA, or the trunk snapshot |
 | `install-clang` | A Clang from apt.llvm.org, optionally with libc++ |
 | `vcpkg-overlay` | Locate the overlay triplets, which live here rather than in each caller |
