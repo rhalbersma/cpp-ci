@@ -41,11 +41,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@4ccffd02f1a880e23597610589c47be5320eb1bd
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@3a0d191267f02fd40d0514321c5b9be95f150e36
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@4ccffd02f1a880e23597610589c47be5320eb1bd
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@3a0d191267f02fd40d0514321c5b9be95f150e36
         with:
           toolchain: clang
           tier: ${{ inputs.tier }}
@@ -59,7 +59,7 @@ jobs:
           exit 1
 
       - name: Install clang-format
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@4ccffd02f1a880e23597610589c47be5320eb1bd
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@3a0d191267f02fd40d0514321c5b9be95f150e36
         with:
           version: ${{ steps.toolchain.outputs.version }}
           llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
