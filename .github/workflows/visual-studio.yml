@@ -73,6 +73,17 @@ on:
         type: string
         required: false
         default: ""
+      scan_for_modules:
+        description: >
+          Whether CMake scans every C++20 translation unit for the modules it
+          imports, as CMAKE_CXX_SCAN_FOR_MODULES. Off by default: a project
+          importing none pays a preprocessor pass per translation unit for it,
+          and keeps a fully preprocessed copy of each in the build tree --
+          about 5 MB a unit, 740 MB for one library's 153. Passed ahead of
+          cmake_args, so a -D there still wins.
+        type: boolean
+        required: false
+        default: false
       cmake_args:
         description: Extra -D arguments for the configure step.
         type: string
@@ -182,6 +193,7 @@ jobs:
           TOOLSET: ${{ inputs.toolset }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
           FEATURES: ${{ inputs.vcpkg_features }}
         run: |
           # -split, then @extra: PowerShell would otherwise pass the whole
@@ -205,12 +217,15 @@ jobs:
             $names = $env:FEATURES -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
             $features = @("-DVCPKG_MANIFEST_FEATURES=$($names -join ';')")
           }
+          # The module scan goes ahead of @extra, so a caller's own -D for it
+          # comes later and wins.
           cmake -S . -B build `
             -G "${env:GENERATOR}" -A x64 `
             -T "${env:TOOLSET}" `
             "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=${env:TRIPLET}" `
             @features `
+            "-DCMAKE_CXX_SCAN_FOR_MODULES=${env:SCAN_FOR_MODULES}" `
             @extra
 
       # CMake cannot be told "version=Preview", so the number the install
@@ -224,6 +239,7 @@ jobs:
           PREVIEW_PREFIX: ${{ inputs.preview_toolset_prefix }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
           FEATURES: ${{ inputs.vcpkg_features }}
         run: |
           # -split, then @extra: PowerShell would otherwise pass the whole
@@ -247,12 +263,15 @@ jobs:
             $names = $env:FEATURES -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
             $features = @("-DVCPKG_MANIFEST_FEATURES=$($names -join ';')")
           }
+          # The module scan goes ahead of @extra, so a caller's own -D for it
+          # comes later and wins.
           cmake -S . -B build `
             -G "${env:GENERATOR}" -A x64 `
             -T "${env:PREVIEW_PREFIX}version=${env:PREVIEW_TOOLSET},host=x64" `
             "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=${env:TRIPLET}" `
             @features `
+            "-DCMAKE_CXX_SCAN_FOR_MODULES=${env:SCAN_FOR_MODULES}" `
             @extra
 
       - name: Build
