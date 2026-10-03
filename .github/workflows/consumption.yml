@@ -63,6 +63,19 @@ on:
         type: string
         required: false
         default: ""
+      scan_for_modules:
+        description: >
+          Whether CMake scans every C++20 translation unit for the modules it
+          imports, as CMAKE_CXX_SCAN_FOR_MODULES. Off by default: a project
+          importing none pays a preprocessor pass per translation unit for it,
+          and keeps a fully preprocessed copy of each in the build tree --
+          about 5 MB a unit, 740 MB for one library's 153. Passed to every
+          configure here -- the dependency repositories, the library and each
+          consumer -- and on the library's ahead of cmake_args, so a -D there
+          still wins.
+        type: boolean
+        required: false
+        default: false
       cmake_args:
         description: Extra -D arguments for configuring the library itself.
         type: string
@@ -84,6 +97,8 @@ jobs:
     env:
       VCPKG_BINARY_SOURCES: "clear;default,readwrite"
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+      # Job-wide, because every configure here takes it, not the library's alone.
+      SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -227,6 +242,7 @@ jobs:
               -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
               -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
               -DCMAKE_PREFIX_PATH="$prefix" \
+              -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
               -DBUILD_TESTING=OFF
             cmake --install "dep-build-$n" --prefix "$prefix"
           done <<< "$DEPENDENCY_REPOS"
@@ -337,6 +353,7 @@ jobs:
             -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
             -DBUILD_TESTING=OFF \
+            -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
             "${library[@]}" "${deps[@]}" "${caller[@]}"
 
       - name: Install
@@ -352,7 +369,8 @@ jobs:
           cmake -S "$CONSUMER_DIR/find_package" -B build-find-package \
             -G "$GENERATOR" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
-            -DCMAKE_PREFIX_PATH="$CONSUMER_PREFIX_PATH"
+            -DCMAKE_PREFIX_PATH="$CONSUMER_PREFIX_PATH" \
+            -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES"
           cmake --build build-find-package -v
           ./build-find-package/main
 
@@ -367,6 +385,7 @@ jobs:
           cmake -S "$CONSUMER_DIR/add_subdirectory" -B build-add-subdirectory \
             -G "$GENERATOR" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
+            -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
             "${prefix[@]}"
           cmake --build build-add-subdirectory -v
           ./build-add-subdirectory/main
@@ -382,6 +401,7 @@ jobs:
           cmake -S "$CONSUMER_DIR/fetch_content" -B build-fetch-content \
             -G "$GENERATOR" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
+            -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
             "${prefix[@]}"
           cmake --build build-fetch-content -v
           ./build-fetch-content/main

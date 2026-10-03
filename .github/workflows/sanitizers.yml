@@ -87,6 +87,28 @@ on:
         type: string
         required: false
         default: ""
+      scan_for_modules:
+        description: >
+          Whether CMake scans every C++20 translation unit for the modules it
+          imports, as CMAKE_CXX_SCAN_FOR_MODULES. Off by default: a project
+          importing none pays a preprocessor pass per translation unit for it,
+          and keeps a fully preprocessed copy of each in the build tree --
+          about 5 MB a unit, 740 MB for one library's 153. Passed ahead of
+          cmake_args, so a -D there still wins.
+        type: boolean
+        required: false
+        default: false
+      debug_flags:
+        description: >
+          CMAKE_CXX_FLAGS_DEBUG, in place of CMake's own -g. -g1 keeps the
+          line tables and function names a symbolized backtrace reads and
+          drops the variable and type information that is most of an
+          object's size and of the link's work. Empty passes nothing, so
+          CMake's default applies. Passed ahead of cmake_args, so a -D there
+          still wins.
+        type: string
+        required: false
+        default: "-g1"
       cmake_args:
         description: Extra -D arguments for the configure step.
         type: string
@@ -179,22 +201,26 @@ jobs:
           # implicit-conversion is Clang's alone -- g++ rejects the group --
           # and catches the value-dependent truncations and sign changes that
           # -Wconversion can only diagnose where it proves them statically.
+          #
+          # No -g among the flags: every leg builds Debug, so the debug level
+          # a symbolized report reads is CMAKE_CXX_FLAGS_DEBUG, which is
+          # debug_flags. A -g here would come first on the line and lose.
           legs='[
             {"id":"asan","name":"ASan + LSan","compiler":"GCC","family":"gcc",
-             "flags":"-fsanitize=address -fno-omit-frame-pointer -g",
+             "flags":"-fsanitize=address -fno-omit-frame-pointer",
              "options":"ASAN_OPTIONS=detect_leaks=1"},
             {"id":"asan-libcxx","name":"ASan + LSan","compiler":"Clang libc++","family":"clang","libcxx":true,
-             "flags":"-fsanitize=address -fno-omit-frame-pointer -g -stdlib=libc++",
+             "flags":"-fsanitize=address -fno-omit-frame-pointer -stdlib=libc++",
              "options":"ASAN_OPTIONS=detect_leaks=1"},
             {"id":"ubsan-gcc","name":"UBSan","compiler":"GCC","family":"gcc",
-             "flags":"-fsanitize=undefined -fno-sanitize-recover=undefined -g",
+             "flags":"-fsanitize=undefined -fno-sanitize-recover=undefined",
              "options":"UBSAN_OPTIONS=print_stacktrace=1"},
             {"id":"ubsan-clang","name":"UBSan","compiler":"Clang","family":"clang",
-             "flags":"-fsanitize=undefined -fno-sanitize-recover=undefined -g",
+             "flags":"-fsanitize=undefined -fno-sanitize-recover=undefined",
              "options":"UBSAN_OPTIONS=print_stacktrace=1"},
             {"id":"implicit-conversion","name":"Implicit conversion","compiler":"Clang","family":"clang",
              "ignore_foreign_code":true,
-             "flags":"-fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion -g",
+             "flags":"-fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion",
              "options":"UBSAN_OPTIONS=print_stacktrace=1"}
           ]'
 
@@ -398,6 +424,8 @@ jobs:
           CXX_FLAGS: ${{ inputs.cxx_flags }}
           OVERLAY_TRIPLETS: ${{ steps.overlay.outputs.triplets }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
+          DEBUG_FLAGS: ${{ inputs.debug_flags }}
           GENERATOR: ${{ inputs.generator }}
           FEATURES: ${{ inputs.vcpkg_features }}
         shell: bash
@@ -411,6 +439,9 @@ jobs:
           if [ -n "$FEATURES" ]; then
             features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
           fi
+          # The module scan and the Debug flags go ahead of cmake_args, so a
+          # caller's own -D for either comes later and wins. An empty
+          # debug_flags contributes no argument, leaving CMake's own -g.
           cmake -S . -B build \
             -G "$GENERATOR" \
             -DCMAKE_BUILD_TYPE=Debug \
@@ -422,6 +453,8 @@ jobs:
             -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
             ${features_arg:+"$features_arg"} \
             -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
+            -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
+            ${DEBUG_FLAGS:+"-DCMAKE_CXX_FLAGS_DEBUG=$DEBUG_FLAGS"} \
             "${extra[@]}"
 
       - name: Build

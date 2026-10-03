@@ -218,6 +218,26 @@ compiler family, since its legs are split between them:
       libcxx_tiers: ""
 ```
 
+Two inputs set how much a build writes rather than what it checks, and default
+to the lean side wherever they are taken, so a caller gets them by bumping its
+pin and opts back one stub at a time.
+
+| Input | Default | Passed as | Taken by |
+| :---- | :------ | :-------- | :------- |
+| `scan_for_modules` | `false` | `CMAKE_CXX_SCAN_FOR_MODULES` | every workflow that configures and builds; `clang-tidy` keeps it off, fixed |
+| `debug_flags` | `-g1` | `CMAKE_CXX_FLAGS_DEBUG`; empty passes nothing | `gcc`, `clang`, `clang-libc++`, `apple-clang`, `mingw`, `sanitizers`, `coverage`, `codeql` |
+
+CMake 3.28 and later scans every translation unit of a C++20 target for the
+modules it imports, which for a library importing none is a preprocessor pass
+per unit and a fully preprocessed copy of each left in the build tree — about
+740 MB for 153 units in one caller. `-g1` keeps the line tables and function
+names a symbolized sanitizer report needs, and `gcov` reads no debug
+information at all, so `sanitizers.yml` and `coverage.yml` set no `-g` of their
+own and take this one. The MSVC workflows take no `debug_flags`, since their
+debug options are `/Zi`-style, and neither does `consumption.yml`, which builds
+no Debug configuration. Both are passed ahead of `cmake_args`, so a `-D` there
+still wins.
+
 ## Workflows
 
 Sixteen workflows, and the eight that compile and run the caller's test suite

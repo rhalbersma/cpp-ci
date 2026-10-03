@@ -52,6 +52,28 @@ on:
         type: number
         required: false
         default: 100
+      scan_for_modules:
+        description: >
+          Whether CMake scans every C++20 translation unit for the modules it
+          imports, as CMAKE_CXX_SCAN_FOR_MODULES. Off by default: a project
+          importing none pays a preprocessor pass per translation unit for it,
+          and keeps a fully preprocessed copy of each in the build tree --
+          about 5 MB a unit, 740 MB for one library's 153. Passed ahead of
+          cmake_args, so a -D there still wins.
+        type: boolean
+        required: false
+        default: false
+      debug_flags:
+        description: >
+          CMAKE_CXX_FLAGS_DEBUG, in place of CMake's own -g. -g1 keeps the
+          line tables and function names a symbolized backtrace reads and
+          drops the variable and type information that is most of an
+          object's size and of the link's work. Empty passes nothing, so
+          CMake's default applies. Passed ahead of cmake_args, so a -D there
+          still wins.
+        type: string
+        required: false
+        default: "-g1"
       cmake_args:
         description: Extra -D arguments for the configure step.
         type: string
@@ -155,6 +177,8 @@ jobs:
         env:
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
+          DEBUG_FLAGS: ${{ inputs.debug_flags }}
           GENERATOR: ${{ inputs.generator }}
           FEATURES: ${{ inputs.vcpkg_features }}
         run: |
@@ -167,16 +191,26 @@ jobs:
           if [ -n "$FEATURES" ]; then
             features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
           fi
+          # The module scan and the Debug flags go ahead of cmake_args, so a
+          # caller's own -D for either comes later and wins. An empty
+          # debug_flags contributes no argument, leaving CMake's own -g.
+          #
+          # No -g of its own in CMAKE_CXX_FLAGS: gcov reads the .gcno and
+          # .gcda files --coverage writes, not DWARF, so the debug level is
+          # debug_flags' alone to set, and a -g here would only be overridden
+          # by the -g1 that follows it.
           cmake -S . -B build \
             -G "$GENERATOR" \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
-            -DCMAKE_CXX_FLAGS="--coverage -O0 -g" \
+            -DCMAKE_CXX_FLAGS="--coverage -O0" \
             -DCMAKE_EXE_LINKER_FLAGS="--coverage" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
             ${features_arg:+"$features_arg"} \
+            -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
+            ${DEBUG_FLAGS:+"-DCMAKE_CXX_FLAGS_DEBUG=$DEBUG_FLAGS"} \
             "${extra[@]}"
 
       - name: Build

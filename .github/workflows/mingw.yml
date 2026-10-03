@@ -51,6 +51,28 @@ on:
         type: string
         required: false
         default: ""
+      scan_for_modules:
+        description: >
+          Whether CMake scans every C++20 translation unit for the modules it
+          imports, as CMAKE_CXX_SCAN_FOR_MODULES. Off by default: a project
+          importing none pays a preprocessor pass per translation unit for it,
+          and keeps a fully preprocessed copy of each in the build tree --
+          about 5 MB a unit, 740 MB for one library's 153. Passed ahead of
+          cmake_args, so a -D there still wins.
+        type: boolean
+        required: false
+        default: false
+      debug_flags:
+        description: >
+          CMAKE_CXX_FLAGS_DEBUG, in place of CMake's own -g. -g1 keeps the
+          line tables and function names a symbolized backtrace reads and
+          drops the variable and type information that is most of an
+          object's size and of the link's work. Empty passes nothing, so
+          CMake's default applies. Passed ahead of cmake_args, so a -D there
+          still wins.
+        type: string
+        required: false
+        default: "-g1"
       cmake_args:
         description: Extra -D arguments for the configure step.
         type: string
@@ -189,6 +211,8 @@ jobs:
           BUILD_TYPE: ${{ matrix.build_type }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
+          DEBUG_FLAGS: ${{ inputs.debug_flags }}
           FEATURES: ${{ inputs.vcpkg_features }}
           UNALIGNED_VECTOR_MOVES: ${{ inputs.unaligned_vector_moves }}
         run: |
@@ -221,9 +245,15 @@ jobs:
           if ($env:UNALIGNED_VECTOR_MOVES -eq 'true') {
             $cap = @('-DCMAKE_CXX_FLAGS=-Wa,-muse-unaligned-vector-move')
           }
+          # Empty contributes no argument, as @extra does, leaving CMake's own -g.
+          $debug = @()
+          if ($env:DEBUG_FLAGS) {
+            $debug = @("-DCMAKE_CXX_FLAGS_DEBUG=${env:DEBUG_FLAGS}")
+          }
           # @cap before @extra: a caller passing its own -DCMAKE_CXX_FLAGS in
           # cmake_args comes later on the command line and wins, which is the
           # right way round -- but it then owns this problem itself.
+          # The module scan and @debug go ahead of @extra for the same reason.
           cmake -S . -B build -G Ninja `
             "-DCMAKE_BUILD_TYPE=${env:BUILD_TYPE}" `
             -DCMAKE_C_COMPILER=gcc `
@@ -233,6 +263,8 @@ jobs:
             @features `
             -DVCPKG_APPLOCAL_DEPS=OFF `
             @cap `
+            "-DCMAKE_CXX_SCAN_FOR_MODULES=${env:SCAN_FOR_MODULES}" `
+            @debug `
             @extra
 
       - name: Build
