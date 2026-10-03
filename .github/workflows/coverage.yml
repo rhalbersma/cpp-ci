@@ -100,11 +100,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@3a0d191267f02fd40d0514321c5b9be95f150e36
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@3a0d191267f02fd40d0514321c5b9be95f150e36
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -118,13 +118,13 @@ jobs:
           exit 1
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@3a0d191267f02fd40d0514321c5b9be95f150e36
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
 
       - name: Install gcovr
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@3a0d191267f02fd40d0514321c5b9be95f150e36
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
 
       - name: Name the toolchain
         env:
@@ -155,7 +155,7 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@3a0d191267f02fd40d0514321c5b9be95f150e36
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}
@@ -284,7 +284,7 @@ jobs:
       # pass in alongside coverage.xml, undoing the exclusions above.
       - name: Upload to Codecov
         if: always()
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
           files: build/coverage.xml
           plugins: noop
