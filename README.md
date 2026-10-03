@@ -224,7 +224,7 @@ pin and opts back one stub at a time.
 
 | Input | Default | Passed as | Taken by |
 | :---- | :------ | :-------- | :------- |
-| `scan_for_modules` | `false` | `CMAKE_CXX_SCAN_FOR_MODULES` | every workflow that configures |
+| `scan_for_modules` | `false` | `CMAKE_CXX_SCAN_FOR_MODULES` | every workflow that configures and builds; `clang-tidy` keeps it off, fixed |
 | `debug_flags` | `-g1` | `CMAKE_CXX_FLAGS_DEBUG`; empty passes nothing | `gcc`, `clang`, `clang-libc++`, `apple-clang`, `mingw`, `sanitizers`, `coverage`, `codeql` |
 
 CMake 3.28 and later scans every translation unit of a C++20 target for the

@@ -104,23 +104,6 @@ on:
         type: string
         required: false
         default: ""
-      scan_for_modules:
-        description: >
-          Whether CMake scans every C++20 translation unit for the modules it
-          imports, as CMAKE_CXX_SCAN_FOR_MODULES. Off by default: a project
-          importing none pays a preprocessor pass per translation unit for it,
-          and keeps a fully preprocessed copy of each in the build tree --
-          about 5 MB a unit, 740 MB for one library's 153. Passed ahead of
-          cmake_args, so a -D there still wins.
-
-          Off is also the one value this job can use. It configures and
-          never builds, so the module map files a scan names in the compile
-          database are never written, and true fails clang-tidy on every
-          translation unit. The input is here for symmetry with the workflows
-          that build; a caller scanning there leaves this one off.
-        type: boolean
-        required: false
-        default: false
       cmake_args:
         description: Extra -D arguments for the configure step.
         type: string
@@ -246,7 +229,6 @@ jobs:
         env:
           TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
-          SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
           GENERATOR: ${{ inputs.generator }}
           FEATURES: ${{ inputs.vcpkg_features }}
         run: |
@@ -264,12 +246,10 @@ jobs:
           # database as @<target>.dir/<source>.o.modmap. clang-tidy replays
           # each entry verbatim and every translation unit then fails on a
           # response file that was never written. Scanning buys this job
-          # nothing either way -- clang-tidy reads sources, not BMIs. Hence
-          # scan_for_modules defaults off, and goes ahead of cmake_args so a
-          # caller's own -D still wins.
+          # nothing either way -- clang-tidy reads sources, not BMIs.
           cmake -S . -B build \
             -G "$GENERATOR" \
-            -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
+            -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
