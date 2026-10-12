@@ -98,13 +98,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Emscripten
-        uses: rhalbersma/cpp-ci/.github/actions/install-emsdk@96a851099844c5cb909428c84906d2fa630a2a94
+        uses: rhalbersma/cpp-ci/.github/actions/install-emsdk@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
         with:
           version: ${{ inputs.emsdk_version }}
 
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@96a851099844c5cb909428c84906d2fa630a2a94
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
 
       - name: Report toolchain versions
         run: |
@@ -121,7 +121,7 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@96a851099844c5cb909428c84906d2fa630a2a94
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
         with:
           triplet: ${{ env.TRIPLET }}
           features: ${{ inputs.vcpkg_features }}
