@@ -23,6 +23,12 @@ inputs:
       shared-library path below is the whole point.
     required: false
     default: "true"
+  multilib:
+    description: >
+      Whether a release install also brings the 32-bit runtime, for -m32. The
+      trunk snapshot is built without it, so asking for both fails the step.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -32,6 +38,7 @@ runs:
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
+        MULTILIB: ${{ inputs.multilib }}
       run: |
         # add-apt-repository resolves a ppa: shorthand through Launchpad's
         # web API via launchpadlib, before apt is involved at all, so the
@@ -52,6 +59,9 @@ runs:
         done
         sudo apt-get update
         sudo apt-get install -y "g++-${VERSION}"
+        if [ "$MULTILIB" = "true" ]; then
+          sudo apt-get install -y "g++-${VERSION}-multilib"
+        fi
 
     - name: Install GCC trunk snapshot
       if: inputs.trunk == 'true'
@@ -59,8 +69,13 @@ runs:
       env:
         VERSION: ${{ inputs.version }}
         SYMLINK_BINARIES: ${{ inputs.symlink_binaries }}
+        MULTILIB: ${{ inputs.multilib }}
       run: |
         set -euo pipefail
+        if [ "$MULTILIB" = "true" ]; then
+          echo "::error::the GCC trunk snapshot has no 32-bit multilib; leave the development rung out of an i686 ladder"
+          exit 1
+        fi
         # Jonathan Wakely's binary snapshot of GCC trunk
         # (https://jwakely.github.io/pkg-gcc-latest/), required like any leg.
         wget -q --tries=3 --waitretry=5 --retry-on-http-error=429,500,502,503,504 https://kayari.org/gcc-latest/gcc-latest.deb -O gcc-latest.deb

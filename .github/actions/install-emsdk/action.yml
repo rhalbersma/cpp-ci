@@ -1,0 +1,67 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Install the Emscripten SDK
+description: >
+  Install and activate one Emscripten release through emsdk, cached by
+  version, and export the environment the later steps need: EMSDK, which
+  vcpkg's wasm32 triplets read to find Emscripten.cmake; EMSDK_NODE, the node
+  ctest runs each test under; and the compiler and node on PATH.
+
+inputs:
+  version:
+    description: Emscripten release, e.g. "6.0.12". Also the emsdk tag cloned.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # About a gigabyte unpacked, nearly all of it LLVM, so a cache hit saves
+    # the download that otherwise dominates the leg's setup.
+    - name: Restore emsdk
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ~/emsdk
+        key: emsdk-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install emsdk ${{ inputs.version }}
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        git clone --depth 1 --branch "$VERSION" https://github.com/emscripten-core/emsdk ~/emsdk
+        # emsdk publishes no checksums for its tags, so record what arrived.
+        git -C ~/emsdk rev-parse HEAD
+        ~/emsdk/emsdk install "$VERSION"
+        ~/emsdk/emsdk activate "$VERSION"
+
+    - name: Save emsdk
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ~/emsdk
+        key: emsdk-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Export the Emscripten environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        # emsdk_env.sh sets the variables in this shell only; carry them over.
+        # shellcheck disable=SC1090
+        source ~/emsdk/emsdk_env.sh > /dev/null
+        {
+          echo "EMSDK=$EMSDK"
+          echo "EMSDK_NODE=$EMSDK_NODE"
+        } >> "$GITHUB_ENV"
+        {
+          echo "$EMSDK"
+          echo "$EMSDK/upstream/emscripten"
+          dirname "$EMSDK_NODE"
+        } >> "$GITHUB_PATH"
+        emcc --version
+        "$EMSDK_NODE" --version
