@@ -1,0 +1,195 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Emscripten
+
+permissions:
+  contents: read
+
+# No concurrency group here, for the reason gcc.yml gives.
+
+# wasm32 through Emscripten, with the tests run under node. The leg where
+# size_t is 32 bits while 64-bit integers are 8-aligned, so a type padded for
+# alignment wider than size_t shows up here and on no native target. One
+# release rather than a ladder: what is under test is the target, and the
+# Clang inside a given Emscripten is already a rung the clang ladder covers.
+on:
+  workflow_call:
+    inputs:
+      emsdk_version:
+        description: Emscripten release, the emsdk tag of the same name.
+        type: string
+        required: false
+        default: "6.0.12"
+      build_types:
+        description: Comma-separated CMake build types.
+        type: string
+        required: false
+        default: Debug
+      vcpkg_features:
+        description: >
+          Comma-separated manifest features to install, as in gcc.yml.
+        type: string
+        required: false
+        default: ""
+      cxx_flags:
+        description: Extra flags for the caller, after -fexceptions.
+        type: string
+        required: false
+        default: ""
+      linker_flags:
+        description: >
+          Emscripten settings for every test executable. Memory growth,
+          since a test allocating past the fixed 16 MB heap aborts; an 8 MB
+          stack, a native thread's default, in place of Emscripten's 64 KB;
+          EXIT_RUNTIME, so main's return value reaches ctest as node's exit
+          code.
+        type: string
+        required: false
+        default: "-sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=8MB -sEXIT_RUNTIME=1"
+      scan_for_modules:
+        description: As in gcc.yml.
+        type: boolean
+        required: false
+        default: false
+      debug_flags:
+        description: As in gcc.yml.
+        type: string
+        required: false
+        default: "-g1"
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  # strategy.matrix takes no list, as in the ladder workflows.
+  types:
+    name: Resolve the build types
+    runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.types.outputs.matrix }}
+    steps:
+      - id: types
+        env:
+          BUILD_TYPES: ${{ inputs.build_types }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$BUILD_TYPES" | tr -d '[:space:]' | tr ',' '\n' | grep -v '^$' \
+            | jq -R . | jq -cs '{build_type: .}' | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ inputs.emsdk_version }} ${{ matrix.build_type }}
+    needs: types
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.types.outputs.legs) }}
+    env:
+      TRIPLET: wasm32-emscripten-eh
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+      VCPKG_CACHE_KEY: vcpkg-emscripten-${{ inputs.emsdk_version }}-
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Emscripten
+        uses: rhalbersma/cpp-ci/.github/actions/install-emsdk@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
+        with:
+          version: ${{ inputs.emsdk_version }}
+
+      - name: Locate the overlay triplets
+        id: overlay
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
+
+      - name: Report toolchain versions
+        run: |
+          emcc --version
+          "$EMSDK_NODE" --version
+          cmake --version
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      - name: Install the test dependencies
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
+        with:
+          triplet: ${{ env.TRIPLET }}
+          features: ${{ inputs.vcpkg_features }}
+          overlay_triplets: ${{ steps.overlay.outputs.triplets }}
+
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      # vcpkg's toolchain chainloads Emscripten's, and the emulator is named
+      # outright: left to itself Emscripten.cmake takes the first node on
+      # PATH, which on the runner image is not the one emsdk ships.
+      - name: Configure
+        shell: bash
+        env:
+          BUILD_TYPE: ${{ matrix.build_type }}
+          CXX_FLAGS: ${{ inputs.cxx_flags }}
+          LINKER_FLAGS: ${{ inputs.linker_flags }}
+          OVERLAY_TRIPLETS: ${{ steps.overlay.outputs.triplets }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
+          DEBUG_FLAGS: ${{ inputs.debug_flags }}
+          FEATURES: ${{ inputs.vcpkg_features }}
+        run: |
+          set -euo pipefail
+          read -ra extra <<< "$EXTRA_CMAKE"
+          features_arg=""
+          if [ -n "$FEATURES" ]; then
+            features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
+          fi
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            ${features_arg:+"$features_arg"} \
+            -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
+            -DCMAKE_CROSSCOMPILING_EMULATOR="$EMSDK_NODE" \
+            -DCMAKE_CXX_FLAGS="-fexceptions${CXX_FLAGS:+ $CXX_FLAGS}" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fexceptions $LINKER_FLAGS" \
+            -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
+            ${DEBUG_FLAGS:+"-DCMAKE_CXX_FLAGS_DEBUG=$DEBUG_FLAGS"} \
+            "${extra[@]}"
+
+      - name: Build
+        run: cmake --build build -v
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  # One check name that does not move, as in gcc.yml.
+  all:
+    name: all
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless every leg succeeded
+        env:
+          RESULT: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+          echo "legs: $RESULT"
+          test "$RESULT" = success

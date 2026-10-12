@@ -97,7 +97,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
         with:
           mode: matrix
           toolchain: clang
@@ -122,12 +122,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
 
       # No paired libstdc++: libc++ replaces it, which is the point of this
       # workflow, and the ladder's gcc_version applies to the other one.
       - name: Install Clang and libc++
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
         with:
           version: ${{ matrix.version }}
           llvm_suffix: ${{ matrix.llvm_suffix }}
@@ -135,7 +135,7 @@ jobs:
 
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
 
       - name: Name the toolchain and its cache
         env:
@@ -166,7 +166,7 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}

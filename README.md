@@ -240,13 +240,13 @@ still wins.
 
 ## Workflows
 
-Sixteen workflows, and the eight that compile and run the caller's test suite
+Seventeen workflows, and the nine that compile and run the caller's test suite
 are the ones that say most; this table sorts all of them by what each does with
 that suite.
 
 | The caller's test suite | Workflows |
 | :---------------------- | :-------- |
-| Configured, built and run under `ctest` | the six ladder workflows, `sanitizers.yml`, `coverage.yml` |
+| Configured, built and run under `ctest` | the six ladder workflows, `emscripten.yml`, `sanitizers.yml`, `coverage.yml` |
 | Configured and built, not run | `codeql.yml`, `msvc-analyze.yml` |
 | Configured off; a consumer built instead | `consumption.yml` |
 | Configured for a compile database only | `clang-tidy.yml` |
@@ -295,6 +295,37 @@ group: inside a called workflow `github.workflow_ref` names the *calling*
 workflow, so a group defined here would land in the caller's own group and
 cancel it. The stub knows whether it was reached by a push, a schedule, or a
 canary; these do not.
+
+#### 32-bit targets
+
+Every row above builds for a 64-bit target, so none of them can see code that
+takes `size_t` to be 64 bits, `alignof(std::int64_t)` to be 8, or `__int128`
+to exist. Two legs build for targets where those fail, and they fail
+differently, so each catches what the other cannot:
+
+| Target | Workflow | `size_t` | `alignof(std::int64_t)` in a class | `__int128` | Tests run under |
+| :----- | :------- | :------- | :--------------------------------- | :--------- | :-------------- |
+| i686 | [`gcc.yml`](.github/workflows/gcc.yml) with `arch: x86` | `unsigned int` | 4 | no | the runner, natively |
+| wasm32 | [`emscripten.yml`](.github/workflows/emscripten.yml) | `unsigned long` | 8 | yes | node |
+
+`arch: x86` adds `-m32` and installs the GCC's multilib, with the dependencies
+from the `x86-linux-gcc` overlay triplet. The trunk snapshot has no 32-bit
+runtime, so an i686 ladder names released rungs only. `emscripten.yml` takes
+one Emscripten release, `emsdk_version`, rather than a ladder, and builds in
+Debug by default; its dependencies come from `wasm32-emscripten-eh`, vcpkg's
+community triplet with exceptions compiled in. Its gate is `<job> / all`.
+
+```yaml
+  i686:
+    uses: rhalbersma/cpp-ci/.github/workflows/gcc.yml@<sha> # <version>
+    with:
+      arch: x86
+      tiers: stable
+      build_types: Debug
+
+  wasm32:
+    uses: rhalbersma/cpp-ci/.github/workflows/emscripten.yml@<sha> # <version>
+```
 
 #### `visual-studio.yml`
 

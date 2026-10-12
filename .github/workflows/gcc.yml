@@ -38,8 +38,20 @@ on:
         type: boolean
         required: false
         default: false
+      arch:
+        description: >
+          Target, x64 or x86. x86 builds for i686 with -m32 through the GCC's
+          multilib, against dependencies from the x86-linux-gcc triplet, and so
+          takes released rungs only: the trunk snapshot has no 32-bit runtime.
+          That leg is where an ILP32 size_t, 4-byte alignment for 64-bit
+          integers and the absence of __int128 all meet.
+        type: string
+        required: false
+        default: x64
       vcpkg_triplet:
-        description: Overlay triplet building the dependencies with the GCC under test.
+        description: >
+          Overlay triplet building the dependencies with the GCC under test.
+          Ignored for arch x86, which has its own.
         type: string
         required: false
         default: x64-linux-gcc
@@ -102,7 +114,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
         with:
           mode: matrix
           toolchain: gcc
@@ -118,6 +130,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.ladder.outputs.legs) }}
     env:
+      ARCH: ${{ inputs.arch }}
+      TRIPLET: ${{ inputs.arch == 'x86' && 'x86-linux-gcc' || inputs.vcpkg_triplet }}
       VCPKG_BINARY_SOURCES: "clear;default,readwrite"
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
       # The overlay triplet is read again by the vcpkg CMake integration, so
@@ -125,21 +139,29 @@ jobs:
       VCPKG_GCC_VERSION: ${{ matrix.version }}
 
     steps:
+      - name: Require a known target
+        run: |
+          case "$ARCH" in
+            x64|x86) ;;
+            *) echo "::error::arch is x64 or x86, not '$ARCH'"; exit 1 ;;
+          esac
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
         with:
           version: ${{ matrix.version }}
           trunk: ${{ matrix.trunk }}
+          multilib: ${{ inputs.arch == 'x86' }}
 
       # vcpkg rather than the distro's packages, and an overlay triplet so
       # the dependencies get the GCC under test and its own libstdc++.
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
 
       - name: Name the toolchain and its cache
         env:
@@ -149,7 +171,7 @@ jobs:
           set -euo pipefail
           echo "TOOLCHAIN_CC=gcc-${VERSION}"  >> "$GITHUB_ENV"
           echo "TOOLCHAIN_CXX=g++-${VERSION}" >> "$GITHUB_ENV"
-          echo "VCPKG_CACHE_KEY=vcpkg-gcc-${LABEL}-" >> "$GITHUB_ENV"
+          echo "VCPKG_CACHE_KEY=vcpkg-gcc-${ARCH}-${LABEL}-" >> "$GITHUB_ENV"
 
       - name: Report toolchain versions
         run: |
@@ -168,9 +190,9 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@b5161ff82d9d4cb1a123ed37c8b0b5295ce8044b
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
         with:
-          triplet: ${{ inputs.vcpkg_triplet }}
+          triplet: ${{ env.TRIPLET }}
           features: ${{ inputs.vcpkg_features }}
           overlay_triplets: ${{ steps.overlay.outputs.triplets }}
 
@@ -191,7 +213,6 @@ jobs:
         env:
           BUILD_TYPE: ${{ matrix.build_type }}
           CXX_FLAGS: ${{ inputs.cxx_flags }}
-          TRIPLET: ${{ inputs.vcpkg_triplet }}
           OVERLAY_TRIPLETS: ${{ steps.overlay.outputs.triplets }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
           SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
@@ -208,6 +229,10 @@ jobs:
           if [ -n "$FEATURES" ]; then
             features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
           fi
+          # -m32 ahead of the caller's flags, and on the C compiler too, so
+          # CMake's own probes see the target the build is for.
+          arch_flags=""
+          if [ "$ARCH" = x86 ]; then arch_flags="-m32"; fi
           # The module scan and the Debug flags go ahead of cmake_args, so a
           # caller's own -D for either comes later and wins. An empty
           # debug_flags contributes no argument, leaving CMake's own -g.
@@ -216,7 +241,8 @@ jobs:
             -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
             -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
-            -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
+            -DCMAKE_C_FLAGS="$arch_flags" \
+            -DCMAKE_CXX_FLAGS="${arch_flags:+$arch_flags }$CXX_FLAGS" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
             ${features_arg:+"$features_arg"} \
