@@ -694,6 +694,123 @@ $ git ls-remote --tags https://github.com/rhalbersma/cpp-ci 'v1.0.0^{}'
 The two unpinned lookups should stay that way: both move by design, and
 neither upstream publishes checksums.
 
+## Future directions
+
+Directions considered and deliberately not taken yet. Each records what it
+would take, so the question can be picked up without rediscovering the answer.
+
+### Declared support instead of dropped rungs
+
+A caller that cannot build on a rung has one tool: leave it out of `tiers:`.
+That loses the day the rung starts working, since a dropped rung is never
+observed again, and it says nothing about why. The alternative is **one minimum
+version per workflow**, a property of the code: the highest version any feature
+it uses requires, or `∞` while nobody implements it. A *major* gap is known
+from the rung's declared version before any runner starts, so that leg is
+dropped; a *minor* gap is whatever the image or nightly ships that day, knowable
+only on the leg, so that leg runs and is not counted. A development rung always
+runs, excused rather than dropped, because trunk is where a feature appears
+first.
+
+The gate then needs per-leg outcomes rather than one `result` per matrix. A
+counted leg that fails is red; an excused leg that fails is excused; and an
+**excused leg that passes is red**, because its waiver is satisfied and should
+be deleted. That alarm is the point of the design, and every run should also
+report which legs are excused. In landing order:
+
+1. Probe what job-level `continue-on-error` reports for a matrix, then spike
+   per-leg outcomes, most likely an artifact per leg reduced by the gate, on
+   `gcc.yml` alone.
+2. `version` fields for `apple-clang`, `msvc` and `mingw` in the toolchain
+   table, with version-aware comparison for Xcode.
+3. A declaration format, most likely a stub input beside `tiers`, and the
+   `toolchain` action marking legs instead of dropping them.
+4. The gate: all counted legs, the excused-green alarm, the excused set
+   reported.
+5. Roll out across the remaining ladder workflows.
+6. `self-check.yml` asking the packagers whether the ladder is stale.
+
+Questions still open: mingw and apple-clang have no development rung, so an `∞`
+waiver there has nothing able to clear it and needs a third state or an explicit
+"stays dropped". A trunk rung's version number is pre-release, so comparing it
+against a minimum may be the wrong instrument. An excused leg absorbs genuine
+trunk regressions while it waits. Debug-only failures are bugs, not support
+declarations, and stay outside the model. Two related items need none of the
+gate plumbing and can land on their own: `check_internal_pins.py` checking that
+the pinned commit is the newest it can be, not only that it resolves, and the
+same one-commit-for-every-pin check run in each caller. Under the model a repin
+stops being a no-op, and the gate should name the legs whose status the new
+pin changes.
+
+### Ladder freshness
+
+`self-check.yml` already runs weekly. It could query each packager the ladder
+draws from, without installing anything: `ppa:ubuntu-toolchain-r/test`,
+apt.llvm.org (does the next suite exist), the WinLibs releases API, and the
+`actions/runner-images` releases for Visual Studio and Xcode. Dependabot watches
+actions; nothing watches compilers, so the ladder advances only when someone
+notices.
+
+### A test for `coverage.yml`
+
+`self-check.yml` lints workflows but never runs one, and `coverage.yml` carries
+the most logic here: the `exclude` split, the line and branch exclusion
+patterns, the thresholds, and three consumers of the report files. Any of them
+can break in a way that stays green, by measuring something other than what 100%
+is meant to mean. The fix is a minimal C++ fixture in this repository, one
+header and one Boost.Test file that covers it, and a `self-check.yml` leg
+running `coverage.yml` against it, asserting that the fixture reaches 100%, that
+an uncovered branch makes it **fail**, that an excluded path stays excluded, and
+that the reports land where the later steps read them. The failing case matters
+most: a threshold that never fires is the defect such a test exists to catch.
+
+### Drift between callers
+
+The callers' configuration should be identical, differing only where a library
+or test dependency requires it, and the difference that does exist should be
+declared rather than incidental. Some differences are deliberate and recorded so
+they are not reopened: `HeaderFilterRegex` naming each library's own path, a
+check suppressed for a stated reason in one caller, `exclude:` naming the tree
+each caller ships, and each `vcpkg.json`. What would keep the rest from
+returning is a report, not enforcement: a `self-check.yml` leg on the weekly
+schedule listing, per shared configuration file, whether the callers agree, in
+the step summary and never failing. A caller with a real local need should not
+have to come here first, but drift should have to be looked at once and then
+explained in the file or removed.
+
+### Shared build and documentation
+
+The same argument that moved the workflows here applies to two more things each
+caller copies.
+
+**A shared build.** The install and export rules, the package config file and
+version file, `CMakePresets.json` and the test-tree conventions are boilerplate
+that is a function of the project name. Two pieces carry real logic worth
+writing once: the header self-sufficiency check, one generated translation unit
+per public header, and one test target per test source. The version, the header
+list, the language standard and anything naming the library's own types stay
+per repository. One constraint shapes the whole design: **the installed package
+must not depend on the shared build**, since a consumer's `find_package` reads
+the installed config, so the shared build may generate that file but nothing it
+provides may appear in it. `consumption.yml` is the guard. A git submodule
+pinned by SHA fits the pinning convention and needs no network at configure
+time, where `FetchContent` would put a download into the very consumption tests
+that guard it.
+
+**Shared documentation.** A prose site first, an API reference later or never:
+none of the callers carries doc comments, and a site of bare signatures would
+draw readers away from the source, where the explanations are. The pipeline
+must tell two kinds of document apart. Living documents, such as a design
+document or a README, are rebuilt on every push. Frozen ones, such as a WG21
+paper as submitted, are published byte for byte and never re-rendered, since a
+fresh render would quietly change a document of record. A `docs.yml` here would
+build the one, copy the other and deploy to Pages, which needs the caller's stub
+to grant `pages: write` and `id-token: write`. Examples compiled by CI and
+included by reference come after there is a site to put them in.
+
+The build goes first and the documentation after, one centralisation at a time,
+so that a failure has one place to come from.
+
 ## License
 
 <pre>
