@@ -300,20 +300,26 @@ canary; these do not.
 
 Every row above builds for a 64-bit target, so none of them can see code that
 takes `size_t` to be 64 bits, `alignof(std::int64_t)` to be 8, or `__int128`
-to exist. Two legs build for targets where those fail, and they fail
-differently, so each catches what the other cannot:
+to exist. Three legs build for targets where those fail, and they fail
+differently, so each catches what the others cannot:
 
 | Target | Workflow | `size_t` | `alignof(std::int64_t)` in a class | `__int128` | Tests run under |
 | :----- | :------- | :------- | :--------------------------------- | :--------- | :-------------- |
 | i686 | [`gcc.yml`](.github/workflows/gcc.yml) with `arch: x86` | `unsigned int` | 4 | no | the runner, natively |
+| x86 | [`visual-studio.yml`](#visual-studioyml) with `arch: x86` | `unsigned int` | 8 | no | the runner, natively |
 | wasm32 | [`emscripten.yml`](.github/workflows/emscripten.yml) | `unsigned long` | 8 | yes | node |
 
 `arch: x86` adds `-m32` and installs the GCC's multilib, with the dependencies
 from the `x86-linux-gcc` overlay triplet. The trunk snapshot has no 32-bit
-runtime, so an i686 ladder names released rungs only. `emscripten.yml` takes
-one Emscripten release, `emsdk_version`, rather than a ladder, and builds in
-Debug by default; its dependencies come from `wasm32-emscripten-eh`, vcpkg's
-community triplet with exceptions compiled in. Its gate is `<job> / all`.
+runtime, so an i686 ladder names released rungs only. `visual-studio.yml`
+takes the same input: `arch: x86` configures with `-A Win32`, keeping the
+x64-hosted tools, against vcpkg's built-in `x86-windows` triplet. Its leg is
+the one where 64-bit members keep 8-byte alignment in a 32-bit class, and
+where the MSVC STL's 128-bit integer class takes its portable path rather than
+the x64 intrinsics. `emscripten.yml` takes one Emscripten release,
+`emsdk_version`, rather than a ladder, and builds in Debug by default; its
+dependencies come from `wasm32-emscripten-eh`, vcpkg's community triplet with
+exceptions compiled in. Its gate is `<job> / all`.
 
 ```yaml
   i686:
@@ -323,6 +329,13 @@ community triplet with exceptions compiled in. Its gate is `<job> / all`.
       tiers: stable
       build_types: Debug
 
+  msvc_x86:
+    uses: rhalbersma/cpp-ci/.github/workflows/visual-studio.yml@<sha> # <version>
+    with:
+      arch: x86
+      tiers: qualification
+      build_types: Debug
+
   wasm32:
     uses: rhalbersma/cpp-ci/.github/workflows/emscripten.yml@<sha> # <version>
 ```
@@ -330,12 +343,14 @@ community triplet with exceptions compiled in. Its gate is `<job> / all`.
 #### `visual-studio.yml`
 
 One workflow stubbed twice, once per toolset, which is what a caller's README
-shows as its separate `MSVC` and `Clang-CL` rows.
+shows as its separate `MSVC` and `Clang-CL` rows. A third stub, for the
+[32-bit](#32-bit-targets) leg, changes only the target.
 
-| Stub job | `toolset` | `preview_toolset_prefix` | `cache_prefix` |
-| :------- | :-------- | :----------------------- | :------------- |
-| `msvc` | default, `host=x64` | default, empty | default, `msvc` |
-| `clang_cl` | `ClangCL,host=x64` | `"ClangCL,"` | `clang-cl` |
+| Stub job | `toolset` | `preview_toolset_prefix` | `cache_prefix` | `arch` |
+| :------- | :-------- | :----------------------- | :------------- | :----- |
+| `msvc` | default, `host=x64` | default, empty | default, `msvc` | default, `x64` |
+| `clang_cl` | `ClangCL,host=x64` | `"ClangCL,"` | `clang-cl` | default, `x64` |
+| `msvc_x86` | default, `host=x64` | default, empty | default, `msvc` | `x86` |
 
 Named for the toolchain rather than the compiler: MSVC's `cl` and the
 `clang-cl` each Visual Studio bundles are the same build in every respect but
@@ -358,8 +373,11 @@ files that would drift.
       cache_prefix: clang-cl
 ```
 
-The two need separate caches because they build the dependencies with
-different compilers. The development rung here is a **preview channel of the
+The two toolsets need separate caches because they build the dependencies with
+different compilers; the vcpkg cache key carries `arch` itself, so `msvc_x86`
+shares `msvc`'s prefix without evicting its archives. `arch: x86` ignores
+`vcpkg_triplet` and installs for `x86-windows`, as `gcc.yml`'s ignores it for
+`x86-linux-gcc`. The development rung here is a **preview channel of the
 same Visual Studio generation**, not a newer one, which is why the `msvc`
 ladder's qualification and development rungs share a label and a runner.
 `preview_toolset_prefix` is separate from `toolset` because that rung takes a

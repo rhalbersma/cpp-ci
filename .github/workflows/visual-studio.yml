@@ -41,6 +41,15 @@ on:
         type: boolean
         required: false
         default: false
+      arch:
+        description: >
+          Target, x64 or x86. x86 configures with -A Win32 and installs the
+          dependencies for vcpkg's x86-windows triplet. That leg is where
+          MSVC's 32-bit ABI meets the code: 8-byte alignment for 64-bit
+          members, and the STL's portable 128-bit integer class.
+        type: string
+        required: false
+        default: x64
       toolset:
         description: >
           CMake -T value on the released rungs. Empty selects the default
@@ -61,7 +70,9 @@ on:
         required: false
         default: msvc
       vcpkg_triplet:
-        description: Triplet for the dependencies.
+        description: >
+          Triplet for the dependencies. Ignored for arch x86, which takes
+          x86-windows.
         type: string
         required: false
         default: x64-windows
@@ -115,10 +126,20 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.ladder.outputs.legs) }}
     env:
+      ARCH: ${{ inputs.arch }}
+      TRIPLET: ${{ inputs.arch == 'x86' && 'x86-windows' || inputs.vcpkg_triplet }}
       VCPKG_BINARY_SOURCES: "clear;default,readwrite"
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
 
     steps:
+      - name: Require a known target
+        shell: bash
+        run: |
+          case "$ARCH" in
+            x64|x86) ;;
+            *) echo "::error::arch is x64 or x86, not '$ARCH'"; exit 1 ;;
+          esac
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Name the cache
@@ -126,7 +147,7 @@ jobs:
         env:
           PREFIX: ${{ inputs.cache_prefix }}
           LABEL: ${{ matrix.label }}
-        run: echo "VCPKG_CACHE_KEY=vcpkg-${PREFIX}-${LABEL}-" >> "$GITHUB_ENV"
+        run: echo "VCPKG_CACHE_KEY=vcpkg-${PREFIX}-${ARCH}-${LABEL}-" >> "$GITHUB_ENV"
 
       - name: Install the MSVC Preview toolset
         if: matrix.preview_channel == 'true'
@@ -152,7 +173,8 @@ jobs:
             (Get-Content "$installPath\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
           }
           Write-Host "MSVC toolset: $toolset"
-          & "$installPath\VC\Tools\MSVC\$toolset\bin\Hostx64\x64\cl.exe" /Bv
+          # The x64-hosted compiler for the target, as -T host=x64 selects.
+          & "$installPath\VC\Tools\MSVC\$toolset\bin\Hostx64\${env:ARCH}\cl.exe" /Bv
           cmake --version
 
       # vcpkg's own x-gha backend was removed, so cache its binary packages
@@ -170,7 +192,7 @@ jobs:
       - name: Install the test dependencies
         uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
         with:
-          triplet: ${{ inputs.vcpkg_triplet }}
+          triplet: ${{ env.TRIPLET }}
           features: ${{ inputs.vcpkg_features }}
 
       # Keyed on the archives' contents: an unconditional save would add an
@@ -191,7 +213,6 @@ jobs:
         env:
           GENERATOR: ${{ matrix.generator }}
           TOOLSET: ${{ inputs.toolset }}
-          TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
           SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
           FEATURES: ${{ inputs.vcpkg_features }}
@@ -217,10 +238,14 @@ jobs:
             $names = $env:FEATURES -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
             $features = @("-DVCPKG_MANIFEST_FEATURES=$($names -join ';')")
           }
+          # Win32 is the generator's name for x86. A local rather than a job
+          # variable: MSBuild reads the environment as properties, and one
+          # named Platform would override the configuration's own.
+          $platform = if ($env:ARCH -eq 'x86') { 'Win32' } else { 'x64' }
           # The module scan goes ahead of @extra, so a caller's own -D for it
           # comes later and wins.
           cmake -S . -B build `
-            -G "${env:GENERATOR}" -A x64 `
+            -G "${env:GENERATOR}" -A $platform `
             -T "${env:TOOLSET}" `
             "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=${env:TRIPLET}" `
@@ -237,7 +262,6 @@ jobs:
           PREVIEW_TOOLSET: ${{ steps.preview.outputs.toolset }}
           GENERATOR: ${{ matrix.generator }}
           PREVIEW_PREFIX: ${{ inputs.preview_toolset_prefix }}
-          TRIPLET: ${{ inputs.vcpkg_triplet }}
           EXTRA_CMAKE: ${{ inputs.cmake_args }}
           SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
           FEATURES: ${{ inputs.vcpkg_features }}
@@ -263,10 +287,14 @@ jobs:
             $names = $env:FEATURES -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
             $features = @("-DVCPKG_MANIFEST_FEATURES=$($names -join ';')")
           }
+          # Win32 is the generator's name for x86. A local rather than a job
+          # variable: MSBuild reads the environment as properties, and one
+          # named Platform would override the configuration's own.
+          $platform = if ($env:ARCH -eq 'x86') { 'Win32' } else { 'x64' }
           # The module scan goes ahead of @extra, so a caller's own -D for it
           # comes later and wins.
           cmake -S . -B build `
-            -G "${env:GENERATOR}" -A x64 `
+            -G "${env:GENERATOR}" -A $platform `
             -T "${env:PREVIEW_PREFIX}version=${env:PREVIEW_TOOLSET},host=x64" `
             "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=${env:TRIPLET}" `
