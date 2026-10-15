@@ -221,7 +221,9 @@ jobs:
 
       # Full coverage of the library's own headers, less assert(...) and
       # "= default;", and less the branches gcov synthesizes that no test can
-      # take.
+      # take. A project's own assert macro, an upper-case name ending in
+      # _ASSERT, is excluded as assert is: it expands to the same conditional,
+      # whose false arm a passing test never takes.
       #
       # A line holding nothing but a closing brace is excluded for the same
       # reason. It carries no code of the author's: what gcov records there is
@@ -257,10 +259,10 @@ jobs:
             --gcov-executable "$TOOLCHAIN_GCOV" \
             --merge-lines \
             "${excludes[@]}" \
-            --exclude-lines-by-pattern '^\s*assert\(' \
+            --exclude-lines-by-pattern '^\s*(assert|[A-Z][A-Z0-9_]*_ASSERT)\(' \
             --exclude-lines-by-pattern '=\s*default;' \
             --exclude-lines-by-pattern '\s*\}\s*$' \
-            --exclude-branches-by-pattern '^\s*assert\(' \
+            --exclude-branches-by-pattern '^\s*(assert|[A-Z][A-Z0-9_]*_ASSERT)\(' \
             --exclude-branches-by-pattern '^\s*.*=\s*default;' \
             --exclude-throw-branches \
             --exclude-unreachable-branches \

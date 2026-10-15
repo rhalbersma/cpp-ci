@@ -398,6 +398,11 @@ Both thresholds are inputs, so a caller ratcheting up from below 100 passes
 lower numbers rather than turning the gate off. `exclude` defaults to
 `test/.* build/.*`, keeping the report to the library's own headers.
 
+A line that begins with `assert(`, or with a project's own assert macro, an
+upper-case name ending in `_ASSERT` such as `XSTD_BITS_ASSERT(`, is excluded from
+both counts: its false arm is the one a passing suite never takes. An assert
+written anywhere else on its line is counted.
+
 It sits on the stable `gcc` rung because what it measures is the code rather
 than the toolchain, and because `gcov` has to match the compiler that produced
 the data. Codecov's two checks, where a caller enables them, are that caller's
