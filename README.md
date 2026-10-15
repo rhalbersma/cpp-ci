@@ -428,7 +428,8 @@ coincide on a 16 GB runner, which then stops answering mid-Build instead of
 reporting a compiler error.
 `build_memory_mib`, 4096 by default, is the budget per compile: the build runs
 as many jobs as `MemAvailable` holds at that budget, at least one and at most
-one per CPU — three on today's hosted runner. A caller whose units are small
+one per CPU — three on today's hosted runner — and reports the count as a
+notice on the run. A caller whose units are small
 passes less.
 
 The legs cross the ladder rather than pinning one release, because a

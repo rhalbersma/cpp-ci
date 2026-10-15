@@ -488,7 +488,7 @@ jobs:
           if (( jobs > cpus )); then
             jobs=$cpus
           fi
-          echo "Building with $jobs jobs: $available_mib MiB available at $BUILD_MEMORY_MIB MiB each, $cpus CPUs"
+          echo "::notice::Building with $jobs jobs: $available_mib MiB available at $BUILD_MEMORY_MIB MiB each, $cpus CPUs"
           cmake --build build -v --parallel "$jobs"
 
       # read -ra: matrix.options is a list of NAME=VALUE settings for env,
