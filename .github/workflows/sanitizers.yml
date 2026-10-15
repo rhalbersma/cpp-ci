@@ -122,6 +122,15 @@ on:
         type: string
         required: false
         default: Ninja
+      build_memory_mib:
+        description: >
+          Memory budgeted per parallel compile, in MiB. The build runs as many
+          jobs as the runner's available memory holds at this budget, at least
+          one and at most one per CPU, where Ninja alone would run two more
+          than the CPUs whatever each one takes.
+        type: number
+        required: false
+        default: 4096
 
 jobs:
   # The legs are crossed with the ladder here rather than written out: a
@@ -457,8 +466,30 @@ jobs:
             ${DEBUG_FLAGS:+"-DCMAKE_CXX_FLAGS_DEBUG=$DEBUG_FLAGS"} \
             "${extra[@]}"
 
+      # Sized by memory, not by CPUs. The heaviest units of a template-heavy
+      # suite peak at several GiB -- one xstd-bits test at 5.2 GiB under ASan
+      # with libc++, against 3.0 GiB with libstdc++, and 5.1 GiB with libc++
+      # and no sanitizer at all -- and Ninja's default of CPUs + 2 jobs on a
+      # 16 GB runner lets three such units coincide. The runner then stops
+      # answering: it was reported lost mid-Build, or killed with SIGTERM,
+      # rather than any compiler failing.
       - name: Build
-        run: cmake --build build -v
+        env:
+          BUILD_MEMORY_MIB: ${{ inputs.build_memory_mib }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          available_mib=$(( $(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo) / 1024 ))
+          cpus=$(nproc)
+          jobs=$(( available_mib / BUILD_MEMORY_MIB ))
+          if (( jobs < 1 )); then
+            jobs=1
+          fi
+          if (( jobs > cpus )); then
+            jobs=$cpus
+          fi
+          echo "::notice::Building with $jobs jobs: $available_mib MiB available at $BUILD_MEMORY_MIB MiB each, $cpus CPUs"
+          cmake --build build -v --parallel "$jobs"
 
       # read -ra: matrix.options is a list of NAME=VALUE settings for env,
       # so it has to word-split -- but unquoted it would glob as well.
