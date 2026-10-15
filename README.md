@@ -421,6 +421,16 @@ every rung its compiler fills — fifteen jobs by default, on every event.
 | UBSan | Clang | `-fsanitize=undefined -fno-sanitize-recover=undefined` |
 | Implicit conversion | Clang | `-fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion` |
 
+The build is sized by memory rather than by CPUs. The heaviest translation
+units of a template-heavy suite peak at several GiB, more with libc++ than with
+libstdc++, and Ninja's default of two jobs more than the CPUs lets several
+coincide on a 16 GB runner, which then stops answering mid-Build instead of
+reporting a compiler error.
+`build_memory_mib`, 4096 by default, is the budget per compile: the build runs
+as many jobs as `MemAvailable` holds at that budget, at least one and at most
+one per CPU — three on today's hosted runner. A caller whose units are small
+passes less.
+
 The legs cross the ladder rather than pinning one release, because a
 sanitizer's instrumentation is no more fixed across releases than across
 compilers: what a run reports depends on the toolchain doing the
