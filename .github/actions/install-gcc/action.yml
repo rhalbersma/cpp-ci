@@ -57,10 +57,50 @@ runs:
           if [ "$i" -eq 5 ]; then exit 1; fi
           sleep $((i * 10))
         done
-        sudo apt-get update
-        sudo apt-get install -y "g++-${VERSION}"
+
+        # apt-get update exits 0 when a source fails, keeping whatever index it
+        # had for it, which for a PPA added a moment ago is none. apt then reads
+        # a package name it cannot find as a regular expression, and "g++-15"
+        # matches clang-15, flang-15 and llvm-15: during a 503 brownout on
+        # ppa.launchpadcontent.net, apt-get install "g++-15" installed those
+        # and exited 0, and the leg failed later at a missing compiler.
+        # apt-cache policy falls back to a regular expression too, so a package
+        # counts as available only where its own name heads the output with an
+        # install candidate, and the install names that exact version, which
+        # apt never reads as a pattern. A pool download refused with a 503
+        # fails the install after Acquire::Retries, so the update and the
+        # install are retried together, on add-apt-repository's backoff.
+        candidate() {
+          apt-cache policy "$1" | awk -v header="$1:" '
+            $0 == header { found = 1; next }
+            /^[^ ]/ { found = 0 }
+            found && $1 == "Candidate:" { print $2; exit }'
+        }
+        packages=("g++-${VERSION}")
         if [ "$MULTILIB" = "true" ]; then
-          sudo apt-get install -y "g++-${VERSION}-multilib"
+          packages+=("g++-${VERSION}-multilib")
+        fi
+        for i in 1 2 3 4 5; do
+          sudo apt-get update || true
+          exact=()
+          for package in "${packages[@]}"; do
+            version=$(candidate "$package")
+            if [ -n "$version" ] && [ "$version" != "(none)" ]; then
+              exact+=("${package}=${version}")
+            fi
+          done
+          if [ "${#exact[@]}" -eq "${#packages[@]}" ] && sudo apt-get install -y "${exact[@]}"; then
+            break
+          fi
+          if [ "$i" -eq 5 ]; then
+            echo "::error::${packages[*]} not installed from ppa:ubuntu-toolchain-r/test after five attempts"
+            exit 1
+          fi
+          sleep $((i * 10))
+        done
+        if ! command -v "g++-${VERSION}" > /dev/null; then
+          echo "::error::g++-${VERSION} is not on PATH after its install"
+          exit 1
         fi
 
     - name: Install GCC trunk snapshot
