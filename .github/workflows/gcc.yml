@@ -114,7 +114,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@bc7b0ff1c3b533020be41122c0f47baf11d135e2
         with:
           mode: matrix
           toolchain: gcc
@@ -148,10 +148,10 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@bc7b0ff1c3b533020be41122c0f47baf11d135e2
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@bc7b0ff1c3b533020be41122c0f47baf11d135e2
         with:
           version: ${{ matrix.version }}
           trunk: ${{ matrix.trunk }}
@@ -161,7 +161,7 @@ jobs:
       # the dependencies get the GCC under test and its own libstdc++.
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@bc7b0ff1c3b533020be41122c0f47baf11d135e2
 
       - name: Name the toolchain and its cache
         env:
@@ -190,7 +190,7 @@ jobs:
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@2306d76dd30f5322b27f2e3a8d0a1a4983d317e3
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@bc7b0ff1c3b533020be41122c0f47baf11d135e2
         with:
           triplet: ${{ env.TRIPLET }}
           features: ${{ inputs.vcpkg_features }}
