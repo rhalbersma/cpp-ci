@@ -1,0 +1,81 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: vcpkg at a pinned commit
+description: >
+  Check out microsoft/vcpkg at one commit and bootstrap it, in place of the
+  runner image's copy, which moves whenever the image does, so a caller's
+  dependency versions could change with nothing of its own changed. Every
+  later step finds this vcpkg through VCPKG_INSTALLATION_ROOT
+  and PATH, so the workflows read it as they read the image's, and a local
+  run that checks out the same commit resolves the same ports.
+inputs:
+  commit:
+    description: >
+      microsoft/vcpkg commit to check out. The default is this repository's
+      pin, bumped by hand: Dependabot follows actions and requirements files,
+      not a commit in another repository.
+    required: false
+    default: bf19794383e8fb95eba5aa553235bc8ec2271688
+outputs:
+  root:
+    description: The checked-out vcpkg's root.
+    value: ${{ steps.unix.outputs.root || steps.windows.outputs.root }}
+runs:
+  using: composite
+  steps:
+    # One commit, fetched by its SHA, which GitHub serves: no history, so the
+    # checkout costs seconds rather than the full registry clone.
+    - id: unix
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        COMMIT: ${{ inputs.commit }}
+      run: |
+        set -euo pipefail
+        root="$RUNNER_TEMP/vcpkg"
+        git init -q "$root"
+        for i in 1 2 3; do
+          if git -C "$root" fetch -q --depth 1 https://github.com/microsoft/vcpkg "$COMMIT"; then break; fi
+          if [ "$i" -eq 3 ]; then
+            echo "::error::could not fetch microsoft/vcpkg at $COMMIT"
+            exit 1
+          fi
+          sleep $((i * 10))
+        done
+        git -C "$root" checkout -q FETCH_HEAD
+        "$root/bootstrap-vcpkg.sh" -disableMetrics
+        echo "VCPKG_INSTALLATION_ROOT=$root" >> "$GITHUB_ENV"
+        echo "VCPKG_ROOT=$root" >> "$GITHUB_ENV"
+        echo "$root" >> "$GITHUB_PATH"
+        echo "root=$root" >> "$GITHUB_OUTPUT"
+        echo "vcpkg $COMMIT at $root"
+    - id: windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        COMMIT: ${{ inputs.commit }}
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $false
+        $root = Join-Path $env:RUNNER_TEMP 'vcpkg'
+        git init -q $root
+        foreach ($i in 1..3) {
+          git -C $root fetch -q --depth 1 https://github.com/microsoft/vcpkg $env:COMMIT
+          if ($LASTEXITCODE -eq 0) { break }
+          if ($i -eq 3) {
+            Write-Host "::error::could not fetch microsoft/vcpkg at $env:COMMIT"
+            exit 1
+          }
+          Start-Sleep -Seconds ($i * 10)
+        }
+        git -C $root checkout -q FETCH_HEAD
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        & (Join-Path $root 'bootstrap-vcpkg.bat') -disableMetrics
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        "VCPKG_INSTALLATION_ROOT=$root" >> $env:GITHUB_ENV
+        "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+        $root >> $env:GITHUB_PATH
+        "root=$root" >> $env:GITHUB_OUTPUT
+        Write-Host "vcpkg $env:COMMIT at $root"
