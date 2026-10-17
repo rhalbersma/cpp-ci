@@ -210,16 +210,30 @@ jobs:
       # the caller asked for vcpkg: manifest mode keys off the source tree
       # being configured, so a dependency shipping its own vcpkg.json would
       # install that repository's test dependencies here, tests-off or not.
-      # A dependency that genuinely needs vcpkg is a reason to grow another
-      # input, not to guess.
+      # A dependency that find_package()s a port of its own still finds it:
+      # with vcpkg on, the caller's manifest install is on its prefix path,
+      # as it is on the consumers', so the caller's vcpkg.json lists what its
+      # dependencies need.
       - name: Install the dependency repositories
         if: inputs.dependency_repos != ''
         env:
           DEPENDENCY_REPOS: ${{ inputs.dependency_repos }}
           GENERATOR: ${{ inputs.generator }}
+          USE_VCPKG: ${{ inputs.vcpkg }}
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
         run: |
           set -euo pipefail
           prefix="$GITHUB_WORKSPACE/deps-prefix"
+          search="$prefix"
+          if [ "$USE_VCPKG" = true ]; then
+            # Checked as the configure arguments check it, before it names a directory.
+            triplet=$(printf '%s' "$TRIPLET" | tr -cd '[:alnum:]._-')
+            if [ "$triplet" != "$TRIPLET" ]; then
+              echo "::error::vcpkg_triplet must match [A-Za-z0-9._-]"
+              exit 1
+            fi
+            search="$search;$GITHUB_WORKSPACE/vcpkg_installed/$triplet"
+          fi
           n=0
           while read -r url rev extra; do
             if [ -z "$url" ]; then continue; fi
@@ -241,7 +255,7 @@ jobs:
               -G "$GENERATOR" \
               -DCMAKE_C_COMPILER="$TOOLCHAIN_CC" \
               -DCMAKE_CXX_COMPILER="$TOOLCHAIN_CXX" \
-              -DCMAKE_PREFIX_PATH="$prefix" \
+              -DCMAKE_PREFIX_PATH="$search" \
               -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
               -DBUILD_TESTING=OFF
             cmake --install "dep-build-$n" --prefix "$prefix"
