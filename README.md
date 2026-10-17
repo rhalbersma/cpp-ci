@@ -584,7 +584,10 @@ installed first. Each repository is configured with the compiler under test and
 with the prefix on its path, so a chain of them resolves in the order given;
 none is configured against vcpkg's toolchain file, since manifest mode keys off
 the tree being configured and a dependency shipping its own `vcpkg.json` would
-install *that* repository's test dependencies here.
+install *that* repository's test dependencies here. With `vcpkg: true`, each also
+gets `<workspace>/vcpkg_installed/<triplet>` on its path, as the consumers do, so a
+dependency that `find_package`s a port finds it, provided the caller's
+`vcpkg.json` lists it.
 
 ### Code formatting
 
