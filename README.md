@@ -692,7 +692,7 @@ verifies. A caller wanting it enforced has to drop the rung instead.
 
 ## Actions
 
-Eight composite actions, which exist because a reusable workflow checks out the
+Nine composite actions, which exist because a reusable workflow checks out the
 caller rather than this repository.
 
 | Action | Purpose |
@@ -705,13 +705,14 @@ caller rather than this repository.
 | `vcpkg-overlay` | Locate the overlay triplets, which live here rather than in each caller |
 | `vcpkg-install` | `vcpkg install`, retried around a download vcpkg will not retry |
 | `clang-tidy` | clang-tidy's passes over a configured build, the one script CI and a local run share |
+| `gcovr` | The coverage gate's gcovr run and its exclusions, the one script CI and a local run share |
 
 Anything a workflow needs to read from here therefore has to arrive as an
 action: an action is fetched from its own repository and `GITHUB_ACTION_PATH`
 points at it. That is why the overlay triplets are an action rather than six
-files copied into four repositories, and why the clang-tidy passes are a
-script behind an action: a developer then runs before pushing the very script
-CI runs.
+files copied into four repositories, and why the clang-tidy passes and the
+coverage gate are scripts behind actions: a developer then runs before pushing
+the very scripts CI runs.
 
 ## Conventions
 
