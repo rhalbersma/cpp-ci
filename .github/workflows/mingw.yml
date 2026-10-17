@@ -99,7 +99,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@bc7b0ff1c3b533020be41122c0f47baf11d135e2
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@48446c533e92c74a9800973132ab6d54edfbb93e
         with:
           mode: matrix
           toolchain: mingw
@@ -125,7 +125,7 @@ jobs:
       # absent between release branches, and that is not this project's fault.
       - name: Install the WinLibs toolchain
         id: winlibs
-        uses: rhalbersma/cpp-ci/.github/actions/install-winlibs@bc7b0ff1c3b533020be41122c0f47baf11d135e2
+        uses: rhalbersma/cpp-ci/.github/actions/install-winlibs@48446c533e92c74a9800973132ab6d54edfbb93e
         with:
           tag_prefix: ${{ matrix.tag_prefix }}
           snapshot: ${{ matrix.snapshot }}
@@ -156,9 +156,13 @@ jobs:
           key: ${{ env.VCPKG_CACHE_KEY }}
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
+      # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
+      - name: Check out vcpkg at the pinned commit
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@48446c533e92c74a9800973132ab6d54edfbb93e
+
       - name: Install the test dependencies
         if: steps.winlibs.outputs.found == 'true'
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@bc7b0ff1c3b533020be41122c0f47baf11d135e2
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@48446c533e92c74a9800973132ab6d54edfbb93e
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}

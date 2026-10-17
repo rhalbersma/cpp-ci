@@ -105,7 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@bc7b0ff1c3b533020be41122c0f47baf11d135e2
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@48446c533e92c74a9800973132ab6d54edfbb93e
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
@@ -115,7 +115,7 @@ jobs:
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@bc7b0ff1c3b533020be41122c0f47baf11d135e2
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@48446c533e92c74a9800973132ab6d54edfbb93e
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -131,7 +131,7 @@ jobs:
       # The image's default GCC is older than these libraries need; the
       # extractor reads whatever standard library the build does.
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@bc7b0ff1c3b533020be41122c0f47baf11d135e2
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@48446c533e92c74a9800973132ab6d54edfbb93e
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
@@ -154,8 +154,12 @@ jobs:
           key: ${{ env.VCPKG_CACHE_KEY }}
           restore-keys: ${{ env.VCPKG_CACHE_KEY }}
 
+      # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
+      - name: Check out vcpkg at the pinned commit
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@48446c533e92c74a9800973132ab6d54edfbb93e
+
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@bc7b0ff1c3b533020be41122c0f47baf11d135e2
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@48446c533e92c74a9800973132ab6d54edfbb93e
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}
