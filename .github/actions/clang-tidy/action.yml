@@ -1,0 +1,72 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: clang-tidy passes
+description: >
+  Run clang-tidy's passes over a configured build: the generated per-header
+  units, each public header as a primary input, the library sources and the
+  test sources. The passes live in clang-tidy.sh beside this action, because a
+  reusable workflow checks out the caller rather than this repository, and a
+  developer runs the same script before pushing; one copy is what keeps the
+  local verdict and CI's the same. Every pass runs, and the step fails when any
+  of them did.
+
+inputs:
+  version:
+    description: The rung's clang-tidy version, naming clang-tidy-N and run-clang-tidy-N.
+    required: true
+  build_dir:
+    description: The configured tree holding compile_commands.json.
+    required: false
+    default: build
+  include_dir:
+    description: Public headers, each also checked as a primary input.
+    required: false
+    default: include
+  include_exclude:
+    description: find -path pattern for headers to skip, or empty for none.
+    required: false
+    default: ""
+  src_dir:
+    description: Library sources, analysed from the compile database when present. Empty disables the pass.
+    required: false
+    default: src
+  test_dir:
+    description: Test sources, analysed the same way. Empty disables the pass.
+    required: false
+    default: test
+  self_sufficiency_regex:
+    description: run-clang-tidy pattern for the generated per-header units, or empty for none.
+    required: false
+    default: ""
+  sources_regex:
+    description: Deprecated explicit pattern for the test tree, honoured in place of test_dir when set.
+    required: false
+    default: ""
+  adapted_dirs:
+    description: Space-separated optional third-party include directories, added with -isystem when present.
+    required: false
+    default: ""
+  report:
+    description: File collecting every pass's output.
+    required: false
+    default: clang-tidy-report.txt
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CLANG_TIDY_VERSION: ${{ inputs.version }}
+        BUILD_DIR: ${{ inputs.build_dir }}
+        INCLUDE_DIR: ${{ inputs.include_dir }}
+        INCLUDE_EXCLUDE: ${{ inputs.include_exclude }}
+        SRC_DIR: ${{ inputs.src_dir }}
+        TEST_DIR: ${{ inputs.test_dir }}
+        SELF_SUFFICIENCY_REGEX: ${{ inputs.self_sufficiency_regex }}
+        SOURCES_REGEX: ${{ inputs.sources_regex }}
+        ADAPTED_DIRS: ${{ inputs.adapted_dirs }}
+        REPORT: ${{ inputs.report }}
+      run: bash "$GITHUB_ACTION_PATH/clang-tidy.sh"
