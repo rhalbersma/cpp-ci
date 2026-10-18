@@ -114,7 +114,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@48446c533e92c74a9800973132ab6d54edfbb93e
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
         with:
           mode: matrix
           toolchain: gcc
@@ -148,10 +148,10 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@48446c533e92c74a9800973132ab6d54edfbb93e
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@48446c533e92c74a9800973132ab6d54edfbb93e
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
         with:
           version: ${{ matrix.version }}
           trunk: ${{ matrix.trunk }}
@@ -161,7 +161,7 @@ jobs:
       # the dependencies get the GCC under test and its own libstdc++.
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@48446c533e92c74a9800973132ab6d54edfbb93e
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
 
       - name: Name the toolchain and its cache
         env:
@@ -191,10 +191,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@48446c533e92c74a9800973132ab6d54edfbb93e
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@48446c533e92c74a9800973132ab6d54edfbb93e
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
         with:
           triplet: ${{ env.TRIPLET }}
           features: ${{ inputs.vcpkg_features }}

@@ -132,7 +132,7 @@ jobs:
       # building, and Debug is the configuration it is read from, for the
       # reason the Configure step gives.
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@48446c533e92c74a9800973132ab6d54edfbb93e
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
         with:
           mode: matrix
           toolchain: clang
@@ -154,11 +154,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@48446c533e92c74a9800973132ab6d54edfbb93e
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
 
       - name: Resolve the GCC supplying libstdc++
         id: libstdcxx
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@48446c533e92c74a9800973132ab6d54edfbb93e
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -166,14 +166,14 @@ jobs:
       # A known-good libstdc++ for the standard library Clang compiles
       # against; the binaries are not wanted, only the headers.
       - name: Install the libstdc++
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@48446c533e92c74a9800973132ab6d54edfbb93e
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
         with:
           version: ${{ steps.libstdcxx.outputs.version }}
           trunk: ${{ steps.libstdcxx.outputs.trunk }}
           symlink_binaries: "false"
 
       - name: Install Clang and clang-tidy
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@48446c533e92c74a9800973132ab6d54edfbb93e
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
         with:
           version: ${{ matrix.version }}
           llvm_suffix: ${{ matrix.llvm_suffix }}
@@ -204,12 +204,12 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@48446c533e92c74a9800973132ab6d54edfbb93e
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
 
       # Only so the test tree configures, and with it the compile database
       # below; clang-tidy itself never links anything.
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@48446c533e92c74a9800973132ab6d54edfbb93e
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}
@@ -263,141 +263,19 @@ jobs:
             ${features_arg:+"$features_arg"} \
             "${extra[@]}"
 
-      # Read from the compile database rather than stated here. The header
-      # pass below drives clang-tidy outside that database and so cannot
-      # inherit the dialect; taking it from the build is the one way the two
-      # cannot disagree.
-      - name: Read the dialect out of the compile database
-        run: |
-          set -euo pipefail
-          std=$(jq -r '.[0].command // .[0].arguments | if type == "array" then join(" ") else . end' \
-            build/compile_commands.json | grep -o -- '-std=[^ ]*' | head -1)
-          if [ -z "$std" ]; then
-            echo "::error::no -std= in build/compile_commands.json"
-            exit 1
-          fi
-          echo "Dialect from the build: $std"
-          echo "CXX_STD=$std" >> "$GITHUB_ENV"
-
-      # One place decides what each compile-database pass runs over, so the
-      # three of them cannot drift in how they resolve a directory or in what
-      # they do when there is nothing there.
-      - name: Resolve the trees to analyse
-        shell: bash
-        env:
-          SRC_DIR: ${{ inputs.src_dir }}
-          TEST_DIR: ${{ inputs.test_dir }}
-          SOURCES_REGEX: ${{ inputs.sources_regex }}
-          SELF_SUFFICIENCY_REGEX: ${{ inputs.self_sufficiency_regex }}
-        run: |
-          set -euo pipefail
-
-          # .file may be relative to .directory, so resolve before matching.
-          # Without this a pass would silently do nothing wherever CMake emits
-          # the relative form, which looks exactly like success.
-          mapfile -t entries < <(jq -r '.[] |
-            if (.file | startswith("/")) then .file
-            else .directory + "/" + .file end' build/compile_commands.json)
-
-          covered() {
-            local entry
-            for entry in "${entries[@]}"; do
-              case "$entry" in "$1"*) return 0 ;; esac
-            done
-            return 1
-          }
-
-          # $1 env name, $2 label, $3 directory, $4 explicit pattern
-          resolve() {
-            local var=$1 label=$2 dir=$3 override=$4 abs
-            if [ -n "$override" ]; then
-              echo "$label: explicit pattern, $override"
-              echo "$var=$override" >> "$GITHUB_ENV"
-            elif [ -z "$dir" ]; then
-              echo "$label: disabled, the directory input is empty"
-            elif [ ! -d "$dir" ]; then
-              echo "$label: no '$dir' directory"
-            else
-              # Absolute, because run-clang-tidy matches the compile
-              # database's own paths; with the trailing slash, so the pattern
-              # cannot anchor on a sibling whose name merely starts the same.
-              abs="$(cd "$dir" && pwd)/"
-              if covered "$abs"; then
-                echo "$label: $abs.*"
-                echo "$var=$abs.*" >> "$GITHUB_ENV"
-              else
-                echo "$label: '$dir' has no compile database entry under it"
-              fi
-            fi
-          }
-
-          resolve TIDY_GENERATED "Generated per-header units" "" "$SELF_SUFFICIENCY_REGEX"
-          resolve TIDY_SOURCE    "Library sources"            "$SRC_DIR" ""
-          resolve TIDY_TEST      "Test sources"               "$TEST_DIR"   "$SOURCES_REGEX"
-
-      # The public headers, through the generated self-sufficiency units.
-      # "shell: bash" for the -o pipefail, without which tee's status wins.
-      - name: Run clang-tidy over the public headers
-        if: env.TIDY_GENERATED != ''
-        shell: bash
-        env:
-          VERSION: ${{ matrix.version }}
-        run: |
-          "run-clang-tidy-${VERSION}" -quiet -p build "$TIDY_GENERATED" 2>&1 \
-            | tee clang-tidy-report.txt
-
-      # Each header as the primary input too, so misc-include-cleaner can tell
-      # a direct include from a transitive one. Aggregates carry IWYU pragmas.
-      - name: Check direct header dependencies
-        shell: bash
-        env:
-          VERSION: ${{ matrix.version }}
-          HEADER_DIR: ${{ inputs.include_dir }}
-          HEADER_EXCLUDE: ${{ inputs.include_exclude || inputs.header_exclude }}
-          ADAPTED_DIRS: ${{ inputs.adapted_dirs }}
-        run: |
-          # read -ra, for the reason given in coverage.yml: an unquoted
-          # expansion globs as well as splits.
-          read -ra adapted_dirs <<< "$ADAPTED_DIRS"
-          adapted=()
-          for dir in "${adapted_dirs[@]}"; do
-            if [ -d "$dir" ]; then
-              adapted+=(-isystem "$dir")
-            fi
-          done
-          exclude=()
-          if [ -n "$HEADER_EXCLUDE" ]; then
-            exclude=(! -path "$HEADER_EXCLUDE")
-          fi
-          mapfile -d '' headers < <(
-            find "$HEADER_DIR" -type f -name '*.hpp' "${exclude[@]}" -print0
-          )
-          for header in "${headers[@]}"; do
-            "clang-tidy-${VERSION}" "$header" -- \
-              -x c++-header "$CXX_STD" -I"$HEADER_DIR" "${adapted[@]}"
-          done 2>&1 | tee -a clang-tidy-report.txt
-
-      # Discovered rather than configured: the compile database already knows
-      # every translation unit the build has, so a caller with sources gets
-      # them analysed without naming a pattern.
-      - name: Run clang-tidy over the library sources
-        if: env.TIDY_SOURCE != ''
-        shell: bash
-        env:
-          VERSION: ${{ matrix.version }}
-        run: |
-          "run-clang-tidy-${VERSION}" -quiet -p build "$TIDY_SOURCE" 2>&1 \
-            | tee -a clang-tidy-report.txt
-
-      # A separate pass so a finding names the tree whose rulebook it came from.
-      - name: Run clang-tidy over the test sources
-        if: env.TIDY_TEST != ''
-        shell: bash
-        env:
-          VERSION: ${{ matrix.version }}
-        run: |
-          "run-clang-tidy-${VERSION}" -quiet -p build "$TIDY_TEST" 2>&1 \
-            | tee -a clang-tidy-report.txt
+      # The dialect, the trees and the four passes, in the script a developer
+      # runs before pushing. Every pass runs, so one round reports every finding.
+      - name: Run clang-tidy's passes
+        uses: rhalbersma/cpp-ci/.github/actions/clang-tidy@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        with:
+          version: ${{ matrix.version }}
+          include_dir: ${{ inputs.include_dir }}
+          include_exclude: ${{ inputs.include_exclude || inputs.header_exclude }}
+          src_dir: ${{ inputs.src_dir }}
+          test_dir: ${{ inputs.test_dir }}
+          self_sufficiency_regex: ${{ inputs.self_sufficiency_regex }}
+          sources_regex: ${{ inputs.sources_regex }}
+          adapted_dirs: ${{ inputs.adapted_dirs }}
 
       - name: Publish clang-tidy summary
         if: always()
