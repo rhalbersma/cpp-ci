@@ -296,6 +296,16 @@ workflow, so a group defined here would land in the caller's own group and
 cancel it. The stub knows whether it was reached by a push, a schedule, or a
 canary; these do not.
 
+**The Linux rows size their build by memory,** as the
+[sanitizer build](#sanitizers) does. `gcc.yml`, `clang.yml` and
+`clang-libc++.yml` take `build_memory_mib`, 4096 by default, and run as many
+compile jobs as `MemAvailable` holds at that budget, at least one and at most
+one per CPU, where Ninja alone would run two more than the CPUs. A
+template-heavy suite's heaviest units peak at several GiB, more with libc++,
+and three of them coinciding on a 16 GB runner leave it shut down mid-Build
+rather than reporting a compiler error. A caller whose units are small passes
+less.
+
 #### 32-bit targets
 
 Every row above builds for a 64-bit target, so none of them can see code that
