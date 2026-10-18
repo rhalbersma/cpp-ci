@@ -130,11 +130,11 @@ jobs:
       # This repository's own actions by owner/repo@sha, not by ./ path: a
       # relative reference resolves against the caller's workspace, which
       # holds the caller's checkout and none of this.
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@75771f7229c5e913165cd0d6bc67613afe84bab9
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@75771f7229c5e913165cd0d6bc67613afe84bab9
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -148,7 +148,7 @@ jobs:
           exit 1
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@75771f7229c5e913165cd0d6bc67613afe84bab9
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
@@ -175,7 +175,7 @@ jobs:
       - name: Locate the overlay triplets
         if: inputs.vcpkg
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@75771f7229c5e913165cd0d6bc67613afe84bab9
 
       - name: Restore vcpkg binary cache
         if: inputs.vcpkg
@@ -188,11 +188,11 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@75771f7229c5e913165cd0d6bc67613afe84bab9
 
       - name: Install the dependencies
         if: inputs.vcpkg
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@75771f7229c5e913165cd0d6bc67613afe84bab9
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           overlay_triplets: ${{ steps.overlay.outputs.triplets }}

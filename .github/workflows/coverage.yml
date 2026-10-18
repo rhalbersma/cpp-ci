@@ -100,11 +100,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@75771f7229c5e913165cd0d6bc67613afe84bab9
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@75771f7229c5e913165cd0d6bc67613afe84bab9
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -118,13 +118,13 @@ jobs:
           exit 1
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@75771f7229c5e913165cd0d6bc67613afe84bab9
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
 
       - name: Install gcovr
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@75771f7229c5e913165cd0d6bc67613afe84bab9
 
       - name: Name the toolchain
         env:
@@ -156,10 +156,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@75771f7229c5e913165cd0d6bc67613afe84bab9
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@75771f7229c5e913165cd0d6bc67613afe84bab9
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}
@@ -223,58 +223,15 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-      # Full coverage of the library's own headers, less assert(...) and
-      # "= default;", and less the branches gcov synthesizes that no test can
-      # take. A project's own assert macro, an upper-case name ending in
-      # _ASSERT, is excluded as assert is: it expands to the same conditional,
-      # whose false arm a passing test never takes.
-      #
-      # A line holding nothing but a closing brace is excluded for the same
-      # reason. It carries no code of the author's: what gcov records there is
-      # the unwind resume for a function with a local to destroy, reachable
-      # only if something inside throws. A test suite that passes never runs
-      # it, so every such function reads one line short of covered. Nothing
-      # hides behind the exclusion either - a function that is never called
-      # still has every line of its body counted.
-      #
-      # --merge-lines because the question this gate asks is whether a line of
-      # a template is ever run, not whether every emitted copy of it is. Without
-      # it gcov's records stay per instantiation and per translation unit, so a
-      # header line reads as uncovered in a unit that instantiates it and takes
-      # another route - which the same line, run in the unit next door, does not
-      # redeem. That is not a gap in the tests, and closing it means re-running
-      # identical code once per caller.
+      # The coverage gate and its exclusions, in the script a developer runs
+      # before pushing; the script carries the reasons for each exclusion.
       - name: Generate coverage report
-        env:
-          EXCLUDE: ${{ inputs.exclude }}
-          FAIL_UNDER_LINE: ${{ inputs.fail_under_line }}
-          FAIL_UNDER_BRANCH: ${{ inputs.fail_under_branch }}
-        run: |
-          set -euo pipefail
-          # read -ra, not an unquoted expansion: a bare "for p in $EXCLUDE"
-          # splits AND globs, and "test/.*" then matches test/.clang-tidy and
-          # stops being a regex, leaving the test tree in the report.
-          read -ra patterns <<< "$EXCLUDE"
-          excludes=()
-          for pattern in "${patterns[@]}"; do
-            excludes+=(--exclude "$pattern")
-          done
-          gcovr --root . \
-            --gcov-executable "$TOOLCHAIN_GCOV" \
-            --merge-lines \
-            "${excludes[@]}" \
-            --exclude-lines-by-pattern '^\s*(assert|[A-Z][A-Z0-9_]*_ASSERT)\(' \
-            --exclude-lines-by-pattern '=\s*default;' \
-            --exclude-lines-by-pattern '\s*\}\s*$' \
-            --exclude-branches-by-pattern '^\s*(assert|[A-Z][A-Z0-9_]*_ASSERT)\(' \
-            --exclude-branches-by-pattern '^\s*.*=\s*default;' \
-            --exclude-throw-branches \
-            --exclude-unreachable-branches \
-            --print-summary \
-            --fail-under-line "$FAIL_UNDER_LINE" \
-            --fail-under-branch "$FAIL_UNDER_BRANCH" \
-            --txt build/coverage.txt \
-            --xml-pretty --xml build/coverage.xml
+        uses: rhalbersma/cpp-ci/.github/actions/gcovr@75771f7229c5e913165cd0d6bc67613afe84bab9
+        with:
+          gcov: ${{ env.TOOLCHAIN_GCOV }}
+          exclude: ${{ inputs.exclude }}
+          fail_under_line: ${{ inputs.fail_under_line }}
+          fail_under_branch: ${{ inputs.fail_under_branch }}
 
       - name: Publish coverage summary
         if: always()
