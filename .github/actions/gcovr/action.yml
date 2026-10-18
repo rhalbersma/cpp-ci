@@ -1,0 +1,46 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: gcovr coverage gate
+description: >
+  Report the coverage of a --coverage build whose tests have run, and fail
+  below the thresholds. The gate lives in gcovr.sh beside this action, because
+  a reusable workflow checks out the caller rather than this repository, and a
+  developer runs the same script before pushing; its exclusion patterns are the
+  gate's rules, and one copy of them is what keeps the local verdict and CI's
+  the same. Expects gcovr on PATH, as install-gcovr leaves it.
+
+inputs:
+  gcov:
+    description: The gcov matching the compiler that built the tests.
+    required: true
+  build_dir:
+    description: Where coverage.txt and coverage.xml are written.
+    required: false
+    default: build
+  exclude:
+    description: Space-separated gcovr --exclude patterns.
+    required: false
+    default: "test/.* build/.*"
+  fail_under_line:
+    description: Line coverage below which the gate fails.
+    required: false
+    default: "100"
+  fail_under_branch:
+    description: Branch coverage below which the gate fails.
+    required: false
+    default: "100"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GCOV: ${{ inputs.gcov }}
+        BUILD_DIR: ${{ inputs.build_dir }}
+        EXCLUDE: ${{ inputs.exclude }}
+        FAIL_UNDER_LINE: ${{ inputs.fail_under_line }}
+        FAIL_UNDER_BRANCH: ${{ inputs.fail_under_branch }}
+      run: bash "$GITHUB_ACTION_PATH/gcovr.sh"
