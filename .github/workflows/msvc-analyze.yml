@@ -112,7 +112,7 @@ jobs:
       # is what reports them: VS 2026 wants the newer image and VS 2022 the
       # older one, so each leg carries its own runner.
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@75771f7229c5e913165cd0d6bc67613afe84bab9
         with:
           mode: matrix
           toolchain: msvc
@@ -157,7 +157,7 @@ jobs:
       - name: Install the MSVC Preview toolset
         if: matrix.preview_channel == 'true'
         id: preview
-        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@75771f7229c5e913165cd0d6bc67613afe84bab9
 
       - name: Report toolchain versions
         shell: pwsh
@@ -191,10 +191,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@75771f7229c5e913165cd0d6bc67613afe84bab9
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@f8dbdcbbaecdc287dbd84bc31d50f26ef6e5c1ac
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@75771f7229c5e913165cd0d6bc67613afe84bab9
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}
