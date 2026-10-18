@@ -103,6 +103,15 @@ on:
         type: string
         required: false
         default: Ninja
+      build_memory_mib:
+        description: >
+          Memory budgeted per parallel compile, in MiB. The build runs as many
+          jobs as the runner's available memory holds at this budget, at least
+          one and at most one per CPU, where Ninja alone would run two more
+          than the CPUs whatever each one takes.
+        type: number
+        required: false
+        default: 4096
 
 jobs:
   # strategy.matrix takes no list and workflow_call inputs are scalars, so the
@@ -255,8 +264,28 @@ jobs:
             ${DEBUG_FLAGS:+"-DCMAKE_CXX_FLAGS_DEBUG=$DEBUG_FLAGS"} \
             "${extra[@]}"
 
+      # Sized by memory, not by CPUs, as the sanitizer build is. One xstd-bits
+      # test peaks at 5.1 GiB with libc++ and 3.0 GiB with libstdc++, and
+      # Ninja's default of CPUs + 2 jobs on a 16 GB runner lets three such
+      # units coincide. The runner then stops answering and is shut down
+      # mid-Build, rather than any compiler failing.
       - name: Build
-        run: cmake --build build -v
+        env:
+          BUILD_MEMORY_MIB: ${{ inputs.build_memory_mib }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          available_mib=$(( $(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo) / 1024 ))
+          cpus=$(nproc)
+          jobs=$(( available_mib / BUILD_MEMORY_MIB ))
+          if (( jobs < 1 )); then
+            jobs=1
+          fi
+          if (( jobs > cpus )); then
+            jobs=$cpus
+          fi
+          echo "::notice::Building with $jobs jobs: $available_mib MiB available at $BUILD_MEMORY_MIB MiB each, $cpus CPUs"
+          cmake --build build -v --parallel "$jobs"
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
