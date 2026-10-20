@@ -79,6 +79,19 @@ jobs:
         with:
           category: "/language:${{ matrix.language }}"
 
+  # The standard-library test-suite adapter's marker readers and mapping
+  # checks, on lines the suites carry. No suite is fetched: what a fetch
+  # returns is the consumers' to classify, on their own legs.
+  std-test-suite:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run the adapter's unit tests
+        run: python3 -I cmake/test_std_test_suite.py -v
+
   # One check name that does not move, for branch protection to require -- the
   # same role the "all" job has in gcc.yml and its siblings.
   #
@@ -94,7 +107,7 @@ jobs:
     # nothing about what it gates. This is a display name chosen to match
     # them, not a reusable-workflow path.
     name: self-check / all
-    needs: [ actionlint, codeql ]
+    needs: [ actionlint, codeql, std-test-suite ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
     # still runs when a leg fails, which is the whole job.
@@ -105,11 +118,14 @@ jobs:
         env:
           ACTIONLINT: ${{ needs.actionlint.result }}
           CODEQL: ${{ needs.codeql.result }}
+          STD_TEST_SUITE: ${{ needs.std-test-suite.result }}
         run: |
           set -euo pipefail
           echo "actionlint: $ACTIONLINT"
           echo "codeql:     $CODEQL"
+          echo "std-test-suite: $STD_TEST_SUITE"
           # Only success passes. A skipped leg is a leg that did not run, which
           # is exactly what this is here to catch.
           test "$ACTIONLINT" = success
           test "$CODEQL" = success
+          test "$STD_TEST_SUITE" = success

@@ -52,8 +52,10 @@ The rest of this file is in the order a caller needs it.
 [Dependencies](#dependencies) is what a caller has to declare and where,
 [Tiers](#tiers-not-versions) is what a rung resolves to,
 [Usage](#usage) is what a stub contains, [Workflows](#workflows) is what each
-one runs and what its gate is called, and [Actions](#actions) and
-[Conventions](#conventions) are the pieces underneath. Each section opens with
+one runs and what its gate is called, [Actions](#actions) and
+[Conventions](#conventions) are the pieces underneath, and
+[Standard library test suites](#standard-library-test-suites) is a CMake
+module a caller's test tree can include. Each section opens with
 a table and spells out below it only what a table cannot carry.
 
 ## Dependencies
@@ -745,6 +747,83 @@ $ git ls-remote --tags https://github.com/rhalbersma/cpp-ci 'v1.0.0^{}'
 
 The two unpinned lookups should stay that way: both move by design, and
 neither upstream publishes checksums.
+
+## Standard library test suites
+
+libc++, libstdc++ and the MSVC STL each ship a test suite written against the
+standard's paragraphs by people who never saw the library under test. A
+library that mirrors part of the standard library can run those suites against
+itself, rewritten onto its own spelling, as a check whose authors have no stake
+in the answer. The adapters live here so that every caller shares one copy of
+them.
+
+| Suite | Fetched from | Pinned by | Runnable tests | Markers read | Support headers |
+| :---- | :----------- | :-------- | :------------- | :----------- | :-------------- |
+| `libcxx` | `llvm/llvm-project` | `clang` stable | `*.pass.cpp`, `*.compile.pass.cpp`, `*.link.pass.cpp` | `REQUIRES`, `UNSUPPORTED`, `XFAIL`, `ADDITIONAL_COMPILE_FLAGS` | `libcxx/test/support/` |
+| `libstdcxx` | `gcc-mirror/gcc` | `gcc` stable | `*.cc` | `dg-do`, `dg-options`, `dg-additional-options`, `dg-require-*`, `dg-skip-if` | `libstdc++-v3/testsuite/util/` |
+| `msvc-stl` | `microsoft/STL` | `msvc` stable | `tests/std/tests/*/test.cpp` | the test directory's `env.lst` | `tests/std/include/` |
+
+The pin is the `test_suite` key on the family's rung in
+[`toolchains.json`](.github/actions/toolchain/toolchains.json), so moving a
+rung moves its suite in the same edit. The clone is shallow, partial
+(`--filter=blob:none`) and sparse, covering the directories the caller takes
+and the support headers. Nothing is vendored: the suites are Apache-2.0 WITH
+LLVM-exception and GPL-3.0 WITH GCC-RLE, and the tests are rewritten in the
+build tree only.
+
+The suite's half is here, in [`cmake/`](cmake): where the suite lives, its pin,
+its support headers, and how its markers read. The caller's half is a mapping
+in TOML, kept in its own repository:
+
+| Key | What it holds |
+| :-- | :------------ |
+| `take` | the directories to take, each with an optional `select`, a regular expression a file must match to be taken at all |
+| `include` | headers prepended to every rewritten test, under a `#line 1` so diagnostics keep the suite's line numbers |
+| `rewrite` | `from` (literal) or `regex`, and `to`, applied in order: `std::vector<bool>` → `xstd::bit_vector` |
+| `expect` | files expected to fail by design, each with its `sha256`, whether it `fails` at `compile` or `run`, and the `paragraph` the library departs from |
+| `assertion` | per-line exceptions: a `line`, matched after stripping, in a `file` of a given `sha256`, replaced by `to` or dropped with `drop = true`, each naming the `departure` it stands for |
+
+Top-level keys apply to every suite, and a table named after a suite, such as
+`[libcxx]`, to that suite alone. Several mapping files are merged.
+
+A caller reaches the module through `FetchContent` of this repository at the
+commit its workflows pin, behind an option that is off by default:
+
+```cmake
+FetchContent_Declare(cpp-ci GIT_REPOSITORY https://github.com/rhalbersma/cpp-ci.git GIT_TAG <the workflows' pin>)
+FetchContent_MakeAvailable(cpp-ci)
+include(${cpp-ci_SOURCE_DIR}/cmake/StdTestSuite.cmake)
+std_test_suite(libcxx MAPPING std-test-suite.toml LINK_LIBRARIES xstd::bits)
+```
+
+Each runnable test becomes its own executable and CTest test, labelled
+`std-test-suite` and its suite, and a compile test becomes an object library.
+The target `std-test-suite-<suite>` builds all of them. The markers are read
+against what CMake already knows: the compiler and its version, the standard
+library, `CMAKE_CXX_STANDARD`, the target triple, and whether exceptions and
+RTTI are on. A test's own `-std=` gives way to the caller's.
+
+The adapter is strict where silence would mislead:
+
+- **A stale mapping entry fails configuration.** An expected failure or an
+  exception that names a file the tree no longer has, a hash its file no
+  longer matches, or a line its file no longer carries, is an error. An
+  upstream edit to a test is therefore reviewed, never carried forward.
+- **An expected failure that starts passing turns red.** One expected at run is
+  registered `WILL_FAIL`. One expected at compile is left out of `all` and
+  registered as a build of its target that must fail.
+- **A test no rewrite reaches is skipped, with that reason.** It still names
+  only the standard library's own types, and would pass on their account.
+- **Every file under a taken directory is in `manifest.json`**, beside the
+  generated `tests.cmake`, with its hash and what became of it: built, run,
+  expected to fail, or skipped and why. A caller can hold its own
+  classification table to that list.
+
+Tests of diagnostics, libc++'s `.verify.cpp` and libstdc++'s `dg-error`, are a
+second pass, and are skipped for now with that reason. So is a test whose
+markers this adapter does not interpret: custom `RUN` lines, a lit
+substitution, an unknown `dg-add-options`. Each lands in the manifest as a
+skip with a reason, never as a pass.
 
 ## Future directions
 
