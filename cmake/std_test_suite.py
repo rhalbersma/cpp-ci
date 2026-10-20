@@ -422,8 +422,8 @@ def libstdcxx_classify(path: str, text: str, config: Config) -> tuple[str, str, 
     """Kind, reason, options and DejaGnu's own expected-failure verdict for one libstdc++ file."""
     if not path.endswith(".cc"):
         return "skip", "not a test source", [], ""
-    if not config.gcc_style:
-        return "skip", "libstdc++'s directives assume a GCC-style driver", [], ""
+    if config.stdlib != "libstdc++":
+        return "skip", "libstdc++'s support headers include its internal headers, such as <bits/c++config.h>", [], ""
 
     kind, xfail = "run", ""
     options: list[str] = []
@@ -590,7 +590,7 @@ SUITES = {
         toolchain="msvc",
         root="tests/std/tests/",
         support=("tests/std/include",),
-        fetch=("/tests/std/include/", "/tests/std/*.lst", "/tests/std/tests/**/*.hpp"),
+        fetch=("/tests/std/include/", "/tests/**/*.lst", "/tests/std/tests/**/*.hpp"),
         classify=msvc_classify,
     ),
 }

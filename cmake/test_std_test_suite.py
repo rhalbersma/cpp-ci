@@ -112,8 +112,10 @@ class Libstdcxx(unittest.TestCase):
         self.assertEqual(self.classify("// { dg-require-normal-mode \"\" }\n")[0], "skip")
         self.assertEqual(self.classify('// { dg-error "no match" }\n')[0], "skip")
 
-    def test_msvc_driver(self):
+    def test_other_standard_libraries(self):
         self.assertEqual(self.classify("", MSVC)[0], "skip")
+        self.assertEqual(self.classify("", CLANG)[0], "skip")
+        self.assertEqual(self.classify("", sts.Config("clang", "22.1.8", "libstdc++", 23, "x86_64-pc-linux-gnu"))[0], "run")
 
 
 class Msvc(unittest.TestCase):

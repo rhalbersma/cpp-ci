@@ -801,7 +801,10 @@ Each runnable test becomes its own executable and CTest test, labelled
 The target `std-test-suite-<suite>` builds all of them. The markers are read
 against what CMake already knows: the compiler and its version, the standard
 library, `CMAKE_CXX_STANDARD`, the target triple, and whether exceptions and
-RTTI are on. A test's own `-std=` gives way to the caller's.
+RTTI are on. A test's own `-std=` gives way to the caller's. libstdc++'s
+support headers include its internal headers, so its suite builds only against
+libstdc++, under GCC or Clang; against another standard library every test is
+skipped with that reason.
 
 The adapter is strict where silence would mislead:
 
