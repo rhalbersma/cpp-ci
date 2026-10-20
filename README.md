@@ -784,7 +784,9 @@ in TOML, kept in its own repository:
 | `assertion` | per-line exceptions: a `line`, matched after stripping, in a `file` of a given `sha256`, replaced by `to` or dropped with `drop = true`, each naming the `departure` it stands for |
 
 Top-level keys apply to every suite, and a table named after a suite, such as
-`[libcxx]`, to that suite alone. Several mapping files are merged.
+`[libcxx]`, to that suite alone. Several mapping files are merged. A key
+outside the table above, at any level, fails configuration: a misspelt
+`fail` or `paragrah` would otherwise leave an expected failure unread.
 
 A caller reaches the module through `FetchContent` of this repository at the
 commit its workflows pin, behind an option that is off by default:

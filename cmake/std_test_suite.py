@@ -657,27 +657,70 @@ class Mapping:
     assertion: list[dict] = dataclasses.field(default_factory=list)
 
 
+# Each list a mapping may hold, the keys an entry of it must and may carry, and
+# whether its entries are tables or strings. A key outside these is an error,
+# so a misspelt "fail" or "paragrah" fails loudly rather than leaving an
+# expected failure or an exception silently unread.
+MAPPING_KEYS: dict[str, tuple[set[str], set[str]] | None] = {
+    "take": ({"path"}, {"select"}),
+    "include": None,
+    "rewrite": ({"to"}, {"from", "regex"}),
+    "expect": ({"file", "sha256", "fails", "paragraph"}, set()),
+    "assertion": ({"file", "sha256", "line", "departure"}, {"to", "drop"}),
+}
+
+
+def check_scope(scope: dict, where: str) -> None:
+    """Reject a key, an entry shape or an entry key a mapping table cannot carry."""
+    unknown = set(scope) - set(MAPPING_KEYS)
+    if unknown:
+        raise SystemExit(f"{where}: unknown keys {sorted(unknown)}; expected {sorted(MAPPING_KEYS)}")
+    for key, value in scope.items():
+        if not isinstance(value, list):
+            raise SystemExit(f"{where}: {key} must be an array")
+        shape = MAPPING_KEYS[key]
+        for entry in value:
+            if shape is None:
+                if not isinstance(entry, str):
+                    raise SystemExit(f"{where}: every {key} entry must be a string")
+                continue
+            if not isinstance(entry, dict):
+                raise SystemExit(f"{where}: every {key} entry must be a table")
+            required, optional = shape
+            missing = required - set(entry)
+            extra = set(entry) - required - optional
+            if missing or extra:
+                raise SystemExit(f"{where}: a {key} entry {entry} lacks {sorted(missing)} or carries unknown {sorted(extra)}")
+
+
 def load_mapping(paths: Iterable[pathlib.Path], suite: str) -> Mapping:
     """Top-level tables apply to every suite; a table named after the suite to that suite alone."""
     mapping = Mapping()
     for path in paths:
         doc = tomllib.loads(path.read_text())
-        for scope in (doc, doc.get(suite, {})):
-            for key in ("take", "include", "rewrite", "expect", "assertion"):
+        common = {k: v for k, v in doc.items() if k not in SUITES}
+        check_scope(common, str(path))
+        for name in SUITES:
+            if name in doc:
+                if not isinstance(doc[name], dict):
+                    raise SystemExit(f"{path}: [{name}] must be a table")
+                check_scope(doc[name], f"{path} [{name}]")
+        for scope in (common, doc.get(suite, {})):
+            for key in MAPPING_KEYS:
                 getattr(mapping, key).extend(scope.get(key, []))
-        unknown = set(doc) - {"take", "include", "rewrite", "expect", "assertion"} - set(SUITES)
-        if unknown:
-            raise SystemExit(f"{path}: unknown keys {sorted(unknown)}")
+    for entry in mapping.rewrite:
+        if ("from" in entry) == ("regex" in entry):
+            raise SystemExit(f"rewrite {entry}: give exactly one of from and regex")
     for entry in mapping.expect:
-        if entry.get("fails") not in ("compile", "run"):
-            raise SystemExit(f"expected failure {entry.get('file')}: fails must be compile or run")
-        if not entry.get("paragraph"):
-            raise SystemExit(f"expected failure {entry.get('file')}: name the paragraph the library departs from")
+        if entry["fails"] not in ("compile", "run"):
+            raise SystemExit(f"expected failure {entry['file']}: fails must be compile or run")
+        if not entry["paragraph"]:
+            raise SystemExit(f"expected failure {entry['file']}: name the paragraph the library departs from")
     for entry in mapping.assertion:
-        if not entry.get("departure"):
-            raise SystemExit(f"exception in {entry.get('file')}: name the departure it stands for")
+        if not entry["departure"]:
+            raise SystemExit(f"exception in {entry['file']}: name the departure it stands for")
         if ("to" in entry) == bool(entry.get("drop")):
-            raise SystemExit(f"exception in {entry.get('file')}: give exactly one of to and drop = true")
+            raise SystemExit(f"exception in {entry['file']}: give exactly one of to and drop = true")
     return mapping
 
 

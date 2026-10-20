@@ -175,13 +175,36 @@ class Mapping(unittest.TestCase):
         sts.rewrite(self.TEXT, "f.cpp", digest, mapping, errors)
         self.assertEqual(errors, ["f.cpp: no line reads 'assert(v.data());'"])
 
+    def load(self, text):
+        with tempfile.TemporaryDirectory() as root:
+            path = pathlib.Path(root) / "m.toml"
+            path.write_text(text)
+            return sts.load_mapping([path], "libcxx")
+
+    def test_load_merges_common_and_suite_tables(self):
+        mapping = self.load('include = ["a.hpp"]\n[libcxx]\ninclude = ["b.hpp"]\n[libstdcxx]\ninclude = ["c.hpp"]\n')
+        self.assertEqual(mapping.include, ["a.hpp", "b.hpp"])
+
+    def test_load_rejects_misspelt_keys(self):
+        for text in (
+            'tak = [{ path = "x" }]\n',
+            '[libcxx]\nrewrites = [{ from = "a", to = "b" }]\n',
+            '[libcxx]\ntake = [{ path = "x", selct = "y" }]\n',
+            '[[libcxx.expect]]\nfile = "f"\nsha256 = "0"\nfail = "run"\nparagraph = "[a]/1"\n',
+            '[[libcxx.assertion]]\nfile = "f"\nsha256 = "0"\nline = "x"\ndrop = true\ndeparture = "d"\nreason = "r"\n',
+            '[libcxx]\nrewrite = [{ from = "a", regex = "b", to = "c" }]\n',
+            '[libcxx]\ninclude = [{ header = "a.hpp" }]\n',
+        ):
+            with self.subTest(text=text), self.assertRaises(SystemExit):
+                self.load(text)
+
     def test_load_rejects_unnamed_departures(self):
         with tempfile.TemporaryDirectory() as root:
             path = pathlib.Path(root) / "m.toml"
-            path.write_text('[[libcxx.expect]]\nfile = "f.cpp"\nsha256 = "0"\nfails = "compile"\n')
+            path.write_text('[[libcxx.expect]]\nfile = "f.cpp"\nsha256 = "0"\nfails = "compile"\nparagraph = ""\n')
             with self.assertRaises(SystemExit):
                 sts.load_mapping([path], "libcxx")
-            path.write_text('[[libcxx.assertion]]\nfile = "f.cpp"\nsha256 = "0"\nline = "x"\ndrop = true\n')
+            path.write_text('[[libcxx.assertion]]\nfile = "f.cpp"\nsha256 = "0"\nline = "x"\ndrop = true\ndeparture = ""\n')
             with self.assertRaises(SystemExit):
                 sts.load_mapping([path], "libcxx")
 
