@@ -743,7 +743,7 @@ caller rather than this repository.
 | :----- | :------ |
 | `toolchain` | Resolve rungs to compilers: one rung, or a whole strategy matrix |
 | `apt-retry` | Set the retry key apt actually reads, and drop the image's unused Microsoft source, once per job |
-| `install-gcc` | A GCC release from the toolchain PPA, or the trunk snapshot |
+| `install-gcc` | A GCC release from the toolchain PPA, or from the Launchpad librarian when the PPA's mirror is down; or the trunk snapshot |
 | `install-clang` | A Clang from apt.llvm.org, optionally with libc++ |
 | `vcpkg-setup` | Check out and bootstrap vcpkg at this repository's pinned commit, in place of the runner image's |
 | `vcpkg-overlay` | Locate the overlay triplets, which live here rather than in each caller |
