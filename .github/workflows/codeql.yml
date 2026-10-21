@@ -105,7 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@75771f7229c5e913165cd0d6bc67613afe84bab9
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@dfeb52be2c4fe861ff901cfc29f6616a96e70579
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
@@ -115,7 +115,7 @@ jobs:
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@dfeb52be2c4fe861ff901cfc29f6616a96e70579
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -131,7 +131,7 @@ jobs:
       # The image's default GCC is older than these libraries need; the
       # extractor reads whatever standard library the build does.
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@dfeb52be2c4fe861ff901cfc29f6616a96e70579
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
@@ -156,10 +156,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@dfeb52be2c4fe861ff901cfc29f6616a96e70579
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@dfeb52be2c4fe861ff901cfc29f6616a96e70579
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}

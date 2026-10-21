@@ -1,0 +1,271 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: s390x
+
+permissions:
+  contents: read
+
+# No concurrency group here, for the reason gcc.yml gives.
+
+# s390x through the distribution's cross GCC, with the tests run under QEMU's
+# user-mode emulator. The one big-endian leg: every other target here is
+# little-endian, so a byte copy that assumes the low byte comes first, or a
+# test that counts on it, passes everywhere else and fails only here. s390x
+# rather than powerpc64 because it is a current platform: IBM sells it, and
+# Ubuntu, RHEL and SLES all ship for it, where big-endian powerpc64 Linux has
+# been dropped for ppc64le.
+#
+# One release rather than a ladder, as in emscripten.yml: what is under test
+# is the byte order, and the GCC doing the cross compile is a rung the gcc
+# ladder already builds natively. Emulation makes the tests several times
+# slower than native, so a caller stubs this for its nightly canary rather
+# than for its pull requests.
+on:
+  workflow_call:
+    inputs:
+      gcc_version:
+        description: >
+          Major version of the s390x cross GCC, the g++-N-s390x-linux-gnu
+          package of the runner image's Ubuntu. Ubuntu 26.04 packages 15 in
+          main; its 16 is a pre-release snapshot.
+        type: string
+        required: false
+        default: "15"
+      build_types:
+        description: Comma-separated CMake build types.
+        type: string
+        required: false
+        default: Debug
+      vcpkg_features:
+        description: As in gcc.yml.
+        type: string
+        required: false
+        default: ""
+      cxx_flags:
+        description: Extra flags for the caller.
+        type: string
+        required: false
+        default: ""
+      scan_for_modules:
+        description: As in gcc.yml.
+        type: boolean
+        required: false
+        default: false
+      debug_flags:
+        description: As in gcc.yml.
+        type: string
+        required: false
+        default: "-g1"
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+      build_memory_mib:
+        description: As in gcc.yml.
+        type: number
+        required: false
+        default: 4096
+
+jobs:
+  # strategy.matrix takes no list, as in the ladder workflows.
+  types:
+    name: Resolve the build types
+    runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.types.outputs.matrix }}
+    steps:
+      - id: types
+        env:
+          BUILD_TYPES: ${{ inputs.build_types }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$BUILD_TYPES" | tr -d '[:space:]' | tr ',' '\n' | grep -v '^$' \
+            | jq -R . | jq -cs '{build_type: .}' | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ inputs.gcc_version }} ${{ matrix.build_type }}
+    needs: types
+    # Ubuntu 26.04, not the 24.04 every other Linux leg runs on: the newest
+    # s390x cross GCC 24.04 packages is 14, below the ladder's stable rung.
+    # A runner of its own either way, since on 24.04 that cross GCC's install
+    # removes gcc-multilib, which the i686 leg needs.
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.types.outputs.legs) }}
+    env:
+      GCC_VERSION: ${{ inputs.gcc_version }}
+      TRIPLET: s390x-linux-gcc
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+      VCPKG_CACHE_KEY: vcpkg-gcc-s390x-${{ inputs.gcc_version }}-
+      # The overlay triplet's toolchain is read again by the vcpkg CMake
+      # integration, so the compiler selection has to outlive the install step.
+      VCPKG_GCC_VERSION: ${{ inputs.gcc_version }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@dfeb52be2c4fe861ff901cfc29f6616a96e70579
+
+      # From the image's own archive, so no source is added. A package counts
+      # as available only where its own name heads apt-cache policy with an
+      # install candidate, and the install names that exact version, for the
+      # reason install-gcc gives: apt reads a name it cannot find as a regular
+      # expression, and g++-15-s390x-linux-gnu is one.
+      - name: Install the s390x cross GCC and QEMU
+        run: |
+          set -euo pipefail
+          candidate() {
+            apt-cache policy "$1" | awk -v header="$1:" '
+              $0 == header { found = 1; next }
+              /^[^ ]/ { found = 0 }
+              found && $1 == "Candidate:" { print $2; exit }'
+          }
+          packages=("g++-${GCC_VERSION}-s390x-linux-gnu" qemu-user)
+          for i in 1 2 3 4 5; do
+            sudo apt-get update || true
+            exact=()
+            for package in "${packages[@]}"; do
+              version=$(candidate "$package")
+              if [ -n "$version" ] && [ "$version" != "(none)" ]; then
+                exact+=("${package}=${version}")
+              fi
+            done
+            if [ "${#exact[@]}" -eq "${#packages[@]}" ] && sudo apt-get install -y --no-install-recommends "${exact[@]}"; then
+              break
+            fi
+            if [ "$i" -eq 5 ]; then
+              echo "::error::${packages[*]} not installed after five attempts"
+              exit 1
+            fi
+            sleep $((i * 10))
+          done
+          for tool in "s390x-linux-gnu-gcc-${GCC_VERSION}" "s390x-linux-gnu-g++-${GCC_VERSION}" qemu-s390x; do
+            if ! command -v "$tool" > /dev/null; then
+              echo "::error::$tool is not on PATH after its install"
+              exit 1
+            fi
+          done
+
+      # The triplet builds the dependencies with the cross GCC, and its
+      # toolchain file is chainloaded for the project too, so the ports and
+      # the tests share one compiler, one libstdc++ and one emulator.
+      - name: Locate the overlay triplets
+        id: overlay
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@dfeb52be2c4fe861ff901cfc29f6616a96e70579
+
+      - name: Report toolchain versions
+        run: |
+          "s390x-linux-gnu-gcc-${GCC_VERSION}" --version
+          "s390x-linux-gnu-g++-${GCC_VERSION}" --version
+          qemu-s390x --version
+          cmake --version
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
+      - name: Check out vcpkg at the pinned commit
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@dfeb52be2c4fe861ff901cfc29f6616a96e70579
+
+      - name: Install the test dependencies
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@dfeb52be2c4fe861ff901cfc29f6616a96e70579
+        with:
+          triplet: ${{ env.TRIPLET }}
+          features: ${{ inputs.vcpkg_features }}
+          overlay_triplets: ${{ steps.overlay.outputs.triplets }}
+
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      # The chainloaded toolchain names the cross GCC and sets
+      # CMAKE_CROSSCOMPILING_EMULATOR, so ctest runs every test under
+      # qemu-s390x with no binfmt registration. The dependencies arrive as
+      # imported targets, whose include directories CMake passes as -isystem:
+      # the cross GCC does not search /usr/local/include, and under -I a
+      # dependency's own warnings would fail a -Werror build.
+      - name: Configure
+        shell: bash
+        env:
+          BUILD_TYPE: ${{ matrix.build_type }}
+          CXX_FLAGS: ${{ inputs.cxx_flags }}
+          OVERLAY_TRIPLETS: ${{ steps.overlay.outputs.triplets }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
+          DEBUG_FLAGS: ${{ inputs.debug_flags }}
+          FEATURES: ${{ inputs.vcpkg_features }}
+        run: |
+          set -euo pipefail
+          read -ra extra <<< "$EXTRA_CMAKE"
+          features_arg=""
+          if [ -n "$FEATURES" ]; then
+            features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
+          fi
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$OVERLAY_TRIPLETS/../toolchains/gcc-s390x.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            ${features_arg:+"$features_arg"} \
+            -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
+            -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
+            -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
+            ${DEBUG_FLAGS:+"-DCMAKE_CXX_FLAGS_DEBUG=$DEBUG_FLAGS"} \
+            "${extra[@]}"
+
+      # Sized by memory, not by CPUs, as in gcc.yml.
+      - name: Build
+        env:
+          BUILD_MEMORY_MIB: ${{ inputs.build_memory_mib }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          available_mib=$(( $(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo) / 1024 ))
+          cpus=$(nproc)
+          jobs=$(( available_mib / BUILD_MEMORY_MIB ))
+          if (( jobs < 1 )); then
+            jobs=1
+          fi
+          if (( jobs > cpus )); then
+            jobs=$cpus
+          fi
+          echo "::notice::Building with $jobs jobs: $available_mib MiB available at $BUILD_MEMORY_MIB MiB each, $cpus CPUs"
+          cmake --build build -v --parallel "$jobs"
+
+      # One test per CPU: each runs in an emulator process of its own, which
+      # is CPU-bound and small, so a serial run would leave the rest idle.
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel "$(nproc)"
+
+  # One check name that does not move, as in gcc.yml.
+  all:
+    name: all
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless every leg succeeded
+        env:
+          RESULT: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+          echo "legs: $RESULT"
+          test "$RESULT" = success
