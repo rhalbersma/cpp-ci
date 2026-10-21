@@ -1,0 +1,14 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+# GitHub-hosted labels the pinned actionlint does not know yet. actionlint
+# reads this file from the repository it lints, so it applies to this
+# repository's own run and to no caller's: only s390x.yml runs on
+# ubuntu-26.04, and a caller lints its stub, not the workflow the stub calls.
+# Listed as self-hosted because that is the one list actionlint lets a
+# repository extend; drop the entry once an actionlint release knows it.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
