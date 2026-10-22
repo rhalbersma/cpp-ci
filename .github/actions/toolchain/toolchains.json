@@ -3,7 +3,8 @@
     "stable": {
       "label": "15",
       "version": "15",
-      "trunk": "false"
+      "trunk": "false",
+      "test_suite": "releases/gcc-15.2.0"
     },
     "qualification": {
       "label": "16",
@@ -23,7 +24,8 @@
       "llvm_suffix": "-22",
       "gcc_version": "15",
       "gcc_trunk": "false",
-      "cxxflags": ""
+      "cxxflags": "",
+      "test_suite": "llvmorg-22.1.8"
     },
     "qualification": {
       "label": "23",
@@ -59,7 +61,8 @@
       "label": "2022",
       "os": "windows-2022",
       "generator": "Visual Studio 17 2022",
-      "preview_channel": "false"
+      "preview_channel": "false",
+      "test_suite": "vs-2022-17.14"
     },
     "qualification": {
       "label": "2026",
