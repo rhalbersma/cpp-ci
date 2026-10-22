@@ -100,11 +100,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@75771f7229c5e913165cd0d6bc67613afe84bab9
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@196a3cb571dbf0e9e7b104b4586694753299553a
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@196a3cb571dbf0e9e7b104b4586694753299553a
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -118,13 +118,13 @@ jobs:
           exit 1
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@196a3cb571dbf0e9e7b104b4586694753299553a
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
 
       - name: Install gcovr
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@196a3cb571dbf0e9e7b104b4586694753299553a
 
       - name: Name the toolchain
         env:
@@ -156,10 +156,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@196a3cb571dbf0e9e7b104b4586694753299553a
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@196a3cb571dbf0e9e7b104b4586694753299553a
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}
@@ -226,7 +226,7 @@ jobs:
       # The coverage gate and its exclusions, in the script a developer runs
       # before pushing; the script carries the reasons for each exclusion.
       - name: Generate coverage report
-        uses: rhalbersma/cpp-ci/.github/actions/gcovr@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/gcovr@196a3cb571dbf0e9e7b104b4586694753299553a
         with:
           gcov: ${{ env.TOOLCHAIN_GCOV }}
           exclude: ${{ inputs.exclude }}

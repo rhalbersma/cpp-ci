@@ -242,13 +242,13 @@ still wins.
 
 ## Workflows
 
-Seventeen workflows, and the nine that compile and run the caller's test suite
+Eighteen workflows, and the ten that compile and run the caller's test suite
 are the ones that say most; this table sorts all of them by what each does with
 that suite.
 
 | The caller's test suite | Workflows |
 | :---------------------- | :-------- |
-| Configured, built and run under `ctest` | the six ladder workflows, `emscripten.yml`, `sanitizers.yml`, `coverage.yml` |
+| Configured, built and run under `ctest` | the six ladder workflows, `emscripten.yml`, `s390x.yml`, `sanitizers.yml`, `coverage.yml` |
 | Configured and built, not run | `codeql.yml`, `msvc-analyze.yml` |
 | Configured off; a consumer built instead | `consumption.yml` |
 | Configured for a compile database only | `clang-tidy.yml` |
@@ -350,6 +350,40 @@ exceptions compiled in. Its gate is `<job> / all`.
 
   wasm32:
     uses: rhalbersma/cpp-ci/.github/workflows/emscripten.yml@<sha> # <version>
+```
+
+#### Big-endian target
+
+Every other leg builds for a little-endian target, so none of them can see code
+that takes the first byte of an integer to be its lowest. One leg builds for a
+big-endian one:
+
+| Target | Workflow | Runner | Compiler | Tests run under |
+| :----- | :------- | :----- | :------- | :-------------- |
+| s390x | [`s390x.yml`](.github/workflows/s390x.yml) | `ubuntu-26.04` | Ubuntu's `g++-15-s390x-linux-gnu` | `qemu-s390x`, user-mode |
+
+s390x because it is a current platform — IBM's z/Architecture, an official
+architecture of Ubuntu, RHEL and SLES — where big-endian `powerpc64` Linux has
+been dropped for `ppc64le`. It sits on `ubuntu-26.04` because the newest s390x
+cross GCC `ubuntu-24.04` packages is 14, below the stable rung; on 24.04 that
+package's install also removes `gcc-multilib`, so it could not share a runner
+with the i686 leg in any case. The dependencies come from `s390x-linux-gcc`, an
+overlay triplet building them with the same cross GCC, and its toolchain file is
+chainloaded for the caller's project too, so `ctest` runs every test under the
+emulator with no binfmt registration. The dependencies' include directories
+reach the compiler as `-isystem`, as on a native leg, so their own warnings do
+not fail a `-Werror` build.
+
+Like `emscripten.yml` it takes one release, `gcc_version`, rather than a
+ladder, and builds in Debug by default; its gate is `<job> / all`. Emulation
+makes the test suite several times slower than on a native leg, so a caller
+stubs it with `workflow_dispatch` alone and has its nightly canary dispatch it,
+rather than running it on pull requests.
+
+```yaml
+  # s390x.yml -- dispatched by the canary, never on a pull request.
+  s390x:
+    uses: rhalbersma/cpp-ci/.github/workflows/s390x.yml@<sha> # <version>
 ```
 
 #### `visual-studio.yml`
@@ -711,7 +745,7 @@ caller rather than this repository.
 | :----- | :------ |
 | `toolchain` | Resolve rungs to compilers: one rung, or a whole strategy matrix |
 | `apt-retry` | Set the retry key apt actually reads, and drop the image's unused Microsoft source, once per job |
-| `install-gcc` | A GCC release from the toolchain PPA, or the trunk snapshot |
+| `install-gcc` | A GCC release from the toolchain PPA, or from the Launchpad librarian when the PPA's mirror is down; or the trunk snapshot |
 | `install-clang` | A Clang from apt.llvm.org, optionally with libc++ |
 | `vcpkg-setup` | Check out and bootstrap vcpkg at this repository's pinned commit, in place of the runner image's |
 | `vcpkg-overlay` | Locate the overlay triplets, which live here rather than in each caller |

@@ -79,6 +79,57 @@ jobs:
         with:
           category: "/language:${{ matrix.language }}"
 
+  # install-gcc's librarian route, forced: every caller's GCC and Clang legs
+  # already exercise the PPA route, and the librarian route runs only when the
+  # PPA's mirror is down, which is too late to find it broken. The stable rung
+  # plain and the qualification rung with multilib cover both package sets.
+  install-gcc:
+    name: install-gcc (librarian, ${{ matrix.rung }}${{ matrix.multilib == 'true' && ', multilib' || '' }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rung: stable
+            multilib: "false"
+          - rung: qualification
+            multilib: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run the librarian's unit tests
+        run: python3 -I .github/actions/install-gcc/test_librarian.py -v
+
+      - name: Resolve the rung's GCC
+        id: gcc
+        env:
+          RUNG: ${{ matrix.rung }}
+        run: echo "version=$(jq -r --arg rung "$RUNG" '.gcc[$rung].version' .github/actions/toolchain/toolchains.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Install GCC ${{ steps.gcc.outputs.version }} from the librarian
+        uses: ./.github/actions/install-gcc
+        with:
+          version: ${{ steps.gcc.outputs.version }}
+          trunk: "false"
+          multilib: ${{ matrix.multilib }}
+          source: librarian
+
+      - name: Build and run a program with it
+        env:
+          VERSION: ${{ steps.gcc.outputs.version }}
+          MULTILIB: ${{ matrix.multilib }}
+        run: |
+          set -euo pipefail
+          printf '#include <print>\nauto main() -> int { std::println("{}", __VERSION__); }\n' > hello.cpp
+          "g++-${VERSION}" -std=c++23 hello.cpp -o hello
+          ./hello
+          if [ "$MULTILIB" = "true" ]; then
+            "g++-${VERSION}" -std=c++23 -m32 hello.cpp -o hello32
+            ./hello32
+          fi
+
   # The standard-library test-suite adapter's marker readers and mapping
   # checks, on lines the suites carry. No suite is fetched: what a fetch
   # returns is the consumers' to classify, on their own legs.
@@ -107,7 +158,7 @@ jobs:
     # nothing about what it gates. This is a display name chosen to match
     # them, not a reusable-workflow path.
     name: self-check / all
-    needs: [ actionlint, codeql, std-test-suite ]
+    needs: [ actionlint, codeql, install-gcc, std-test-suite ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
     # still runs when a leg fails, which is the whole job.
@@ -118,14 +169,17 @@ jobs:
         env:
           ACTIONLINT: ${{ needs.actionlint.result }}
           CODEQL: ${{ needs.codeql.result }}
+          INSTALL_GCC: ${{ needs.install-gcc.result }}
           STD_TEST_SUITE: ${{ needs.std-test-suite.result }}
         run: |
           set -euo pipefail
           echo "actionlint: $ACTIONLINT"
           echo "codeql:     $CODEQL"
+          echo "install-gcc: $INSTALL_GCC"
           echo "std-test-suite: $STD_TEST_SUITE"
           # Only success passes. A skipped leg is a leg that did not run, which
           # is exactly what this is here to catch.
           test "$ACTIONLINT" = success
           test "$CODEQL" = success
+          test "$INSTALL_GCC" = success
           test "$STD_TEST_SUITE" = success

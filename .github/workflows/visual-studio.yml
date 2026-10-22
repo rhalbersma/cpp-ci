@@ -109,7 +109,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@196a3cb571dbf0e9e7b104b4586694753299553a
         with:
           mode: matrix
           toolchain: msvc
@@ -152,7 +152,7 @@ jobs:
       - name: Install the MSVC Preview toolset
         if: matrix.preview_channel == 'true'
         id: preview
-        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/install-msvc-preview@196a3cb571dbf0e9e7b104b4586694753299553a
 
       - name: Report toolchain versions
         shell: pwsh
@@ -189,12 +189,12 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@196a3cb571dbf0e9e7b104b4586694753299553a
 
       # MSVC has been binary compatible across toolsets since VS 2015, so
       # dependencies built on the stable leg link against the preview leg too.
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@75771f7229c5e913165cd0d6bc67613afe84bab9
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@196a3cb571dbf0e9e7b104b4586694753299553a
         with:
           triplet: ${{ env.TRIPLET }}
           features: ${{ inputs.vcpkg_features }}

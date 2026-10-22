@@ -7,7 +7,8 @@ name: Install GCC
 description: >
   Install a GCC by major version, from the Ubuntu toolchain PPA for a released
   one and from Jonathan Wakely's trunk snapshot for a development one. Serves
-  both the GCC legs and the Clang legs, which need a matching libstdc++.
+  both the GCC legs and the Clang legs, which need a matching libstdc++. A
+  release the PPA's mirror refuses comes from the Launchpad librarian instead.
 
 inputs:
   version:
@@ -29,6 +30,14 @@ inputs:
       trunk snapshot is built without it, so asking for both fails the step.
     required: false
     default: "false"
+  source:
+    description: >
+      Where a release install comes from. "ppa" takes it through apt from the
+      toolchain PPA, and from the Launchpad librarian when the PPA's mirror
+      still refuses it after five attempts. "librarian" goes to the librarian
+      directly, which is how this repository's self-check exercises that path.
+    required: false
+    default: "ppa"
 
 runs:
   using: composite
@@ -39,65 +48,90 @@ runs:
       env:
         VERSION: ${{ inputs.version }}
         MULTILIB: ${{ inputs.multilib }}
+        SOURCE: ${{ inputs.source }}
       run: |
-        # add-apt-repository resolves a ppa: shorthand through Launchpad's
-        # web API via launchpadlib, before apt is involved at all, so the
-        # Acquire::Retries setting does not cover it: that governs apt's own
-        # downloads. A truncated response (IncompleteRead) or a key the API
-        # will not serve yet (GPGKeyTemporarilyNotFoundError) fails the step
-        # outright, so retry the call itself.
-        #
-        # Five attempts backing off to half a minute, not three to ten
-        # seconds. The shorter budget was spent in sixty-five seconds on a
-        # GPGKeyTemporarilyNotFoundError while a sibling leg installing the
-        # same package on the same image at the same second succeeded -- the
-        # brownout simply outlasted it.
-        for i in 1 2 3 4 5; do
-          if sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test; then break; fi
-          if [ "$i" -eq 5 ]; then exit 1; fi
-          sleep $((i * 10))
-        done
-
-        # apt-get update exits 0 when a source fails, keeping whatever index it
-        # had for it, which for a PPA added a moment ago is none. apt then reads
-        # a package name it cannot find as a regular expression, and "g++-15"
-        # matches clang-15, flang-15 and llvm-15: during a 503 brownout on
-        # ppa.launchpadcontent.net, apt-get install "g++-15" installed those
-        # and exited 0, and the leg failed later at a missing compiler.
-        # apt-cache policy falls back to a regular expression too, so a package
-        # counts as available only where its own name heads the output with an
-        # install candidate, and the install names that exact version, which
-        # apt never reads as a pattern. A pool download refused with a 503
-        # fails the install after Acquire::Retries, so the update and the
-        # install are retried together, on add-apt-repository's backoff.
-        candidate() {
-          apt-cache policy "$1" | awk -v header="$1:" '
-            $0 == header { found = 1; next }
-            /^[^ ]/ { found = 0 }
-            found && $1 == "Candidate:" { print $2; exit }'
-        }
-        packages=("g++-${VERSION}")
-        if [ "$MULTILIB" = "true" ]; then
-          packages+=("g++-${VERSION}-multilib")
-        fi
-        for i in 1 2 3 4 5; do
-          sudo apt-get update || true
-          exact=()
-          for package in "${packages[@]}"; do
-            version=$(candidate "$package")
-            if [ -n "$version" ] && [ "$version" != "(none)" ]; then
-              exact+=("${package}=${version}")
-            fi
+        installed=false
+        if [ "$SOURCE" = "ppa" ]; then
+          # add-apt-repository resolves a ppa: shorthand through Launchpad's
+          # web API via launchpadlib, before apt is involved at all, so the
+          # Acquire::Retries setting does not cover it: that governs apt's own
+          # downloads. A truncated response (IncompleteRead) or a key the API
+          # will not serve yet (GPGKeyTemporarilyNotFoundError) fails the step
+          # outright, so retry the call itself.
+          #
+          # Five attempts backing off to half a minute, not three to ten
+          # seconds. The shorter budget was spent in sixty-five seconds on a
+          # GPGKeyTemporarilyNotFoundError while a sibling leg installing the
+          # same package on the same image at the same second succeeded -- the
+          # brownout simply outlasted it.
+          added=false
+          for i in 1 2 3 4 5; do
+            if sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test; then added=true; break; fi
+            if [ "$i" -lt 5 ]; then sleep $((i * 10)); fi
           done
-          if [ "${#exact[@]}" -eq "${#packages[@]}" ] && sudo apt-get install -y "${exact[@]}"; then
-            break
+
+          # apt-get update exits 0 when a source fails, keeping whatever index it
+          # had for it, which for a PPA added a moment ago is none. apt then reads
+          # a package name it cannot find as a regular expression, and "g++-15"
+          # matches clang-15, flang-15 and llvm-15: during a 503 brownout on
+          # ppa.launchpadcontent.net, apt-get install "g++-15" installed those
+          # and exited 0, and the leg failed later at a missing compiler.
+          # apt-cache policy falls back to a regular expression too, so a package
+          # counts as available only where its own name heads the output with an
+          # install candidate, and the install names that exact version, which
+          # apt never reads as a pattern. A pool download refused with a 503
+          # fails the install after Acquire::Retries, so the update and the
+          # install are retried together, on add-apt-repository's backoff.
+          candidate() {
+            apt-cache policy "$1" | awk -v header="$1:" '
+              $0 == header { found = 1; next }
+              /^[^ ]/ { found = 0 }
+              found && $1 == "Candidate:" { print $2; exit }'
+          }
+          packages=("g++-${VERSION}")
+          if [ "$MULTILIB" = "true" ]; then
+            packages+=("g++-${VERSION}-multilib")
           fi
-          if [ "$i" -eq 5 ]; then
-            echo "::error::${packages[*]} not installed from ppa:ubuntu-toolchain-r/test after five attempts"
-            exit 1
+          for i in 1 2 3 4 5; do
+            if [ "$added" != "true" ]; then break; fi
+            sudo apt-get update || true
+            exact=()
+            for package in "${packages[@]}"; do
+              version=$(candidate "$package")
+              if [ -n "$version" ] && [ "$version" != "(none)" ]; then
+                exact+=("${package}=${version}")
+              fi
+            done
+            if [ "${#exact[@]}" -eq "${#packages[@]}" ] && sudo apt-get install -y "${exact[@]}"; then
+              installed=true
+              break
+            fi
+            if [ "$i" -lt 5 ]; then sleep $((i * 10)); fi
+          done
+          if [ "$installed" != "true" ]; then
+            echo "::warning::${packages[*]} not installed from ppa:ubuntu-toolchain-r/test after five attempts; taking the same packages from the Launchpad librarian"
           fi
-          sleep $((i * 10))
-        done
+        fi
+
+        # ppa.launchpadcontent.net, the mirror apt reads the PPA through, can
+        # refuse nearly every request for hours while Launchpad itself is up:
+        # on 2026-10-21 it answered 503 from 15:19 UTC into the night. The
+        # librarian still serves the PPA's packages, so librarian.py fetches
+        # the set apt would take from the PPA, each checked against the sha256
+        # the Launchpad API reports, and apt installs them as local files.
+        # The PPA's source goes first: with it in place, apt would reach for
+        # the mirror again to resolve anything in the set.
+        if [ "$installed" != "true" ]; then
+          sudo rm -f /etc/apt/sources.list.d/ubuntu-toolchain-r-ubuntu-test-*
+          sudo apt-get update
+          debs="${RUNNER_TEMP}/gcc-${VERSION}-librarian"
+          librarian=(python3 -I "${GITHUB_ACTION_PATH}/librarian.py" --version "$VERSION" --dest "$debs")
+          if [ "$MULTILIB" = "true" ]; then
+            librarian+=(--multilib)
+          fi
+          "${librarian[@]}"
+          sudo apt-get install -y "$debs"/*.deb
+        fi
         if ! command -v "g++-${VERSION}" > /dev/null; then
           echo "::error::g++-${VERSION} is not on PATH after its install"
           exit 1
