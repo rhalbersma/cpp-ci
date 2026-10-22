@@ -895,6 +895,8 @@ def main(argv: list[str] | None = None) -> int:
         *calls,
         "",
     ]
+    # A suite whose every test is skipped writes no copy, so nothing above has made the directory.
+    out.mkdir(parents=True, exist_ok=True)
     cmake_file = out / "tests.cmake"
     if not cmake_file.is_file() or cmake_file.read_text() != "\n".join(body):
         cmake_file.write_text("\n".join(body))

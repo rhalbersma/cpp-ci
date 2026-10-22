@@ -209,5 +209,22 @@ class Mapping(unittest.TestCase):
                 sts.load_mapping([path], "libcxx")
 
 
+class Registration(unittest.TestCase):
+    def test_every_test_skipped(self):
+        # libstdc++'s suite under libc++ skips every test, so nothing is written before tests.cmake.
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            tree, out = root / "tree", root / "build" / "libstdcxx"
+            (tree / "libstdc++-v3/testsuite/23_containers/vector/bool").mkdir(parents=True)
+            (tree / "libstdc++-v3/testsuite/23_containers/vector/bool/1.cc").write_text("int main() {}\n")
+            mapping = root / "m.toml"
+            mapping.write_text('[libstdcxx]\ntake = [{ path = "libstdc++-v3/testsuite/23_containers/vector/bool" }]\n')
+            argv = ["--suite", "libstdcxx", "--mapping", str(mapping), "--tree", str(tree), "--binary-dir", str(out), "--tag", "releases/gcc-15.2.0", "--offline"]
+            argv += ["--compiler", "clang", "--version", "22.1.8", "--stdlib", "libc++", "--std", "26", "--target", "x86_64-pc-linux-gnu"]
+            self.assertEqual(sts.main(argv), 0)
+            self.assertNotIn("std_test_suite_add(", (out / "tests.cmake").read_text())
+            self.assertIn('"kind": "skip"', (out / "manifest.json").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()
