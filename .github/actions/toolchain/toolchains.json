@@ -14,7 +14,8 @@
     "development": {
       "label": "17-SVN",
       "version": "17",
-      "trunk": "true"
+      "trunk": "true",
+      "test_suite": "09561afe3ed2335d3ff6ba7c8ceb927e9223fff5"
     }
   },
   "clang": {
