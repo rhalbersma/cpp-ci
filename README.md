@@ -812,6 +812,7 @@ in TOML, kept in its own repository:
 | Key | What it holds |
 | :-- | :------------ |
 | `take` | the directories to take, each with an optional `select`, a regular expression a file must match to be taken at all |
+| `support` | support headers to rewrite as a test is, each by its `path`, for a suite that calls what the library mirrors from a helper rather than from the test itself |
 | `include` | headers prepended to every rewritten test, under a `#line 1` so diagnostics keep the suite's line numbers |
 | `rewrite` | `from` (literal) or `regex`, and `to`, applied in order: `std::vector<bool>` → `xstd::bit_vector` |
 | `expect` | files expected to fail by design, each with its `sha256`, whether it `fails` at `compile` or `run`, and the `paragraph` the library departs from |
@@ -852,11 +853,27 @@ The adapter is strict where silence would mislead:
   registered `WILL_FAIL`. One expected at compile is left out of `all` and
   registered as a build of its target that must fail.
 - **A test no rewrite reaches is skipped, with that reason.** It still names
-  only the standard library's own types, and would pass on their account.
+  only the standard library's own types, and would pass on their account. A
+  test that includes a rewritten support header counts as reached.
+- **A `support` entry that does nothing fails configuration:** a header the
+  tree does not have, one outside the suite's support headers, or one no
+  rewrite changes.
 - **Every file under a taken directory is in `manifest.json`**, beside the
   generated `tests.cmake`, with its hash and what became of it: built, run,
   expected to fail, or skipped and why. A caller can hold its own
   classification table to that list.
+
+A rewritten support header is copied into the build tree under the name a test
+includes it by, and that directory goes on the include path ahead of the
+suite's own support headers, so the test's `#include` finds the copy. The copy
+takes the mapping's rewrites, its prelude and any exception that names its
+path, as a test does, and the manifest lists it with its hash. libc++'s
+`charconv.to.chars/integral.pass.cpp` is the case it was written for: every
+`std::to_chars` call in it is made from `charconv_test_helpers.h`. Two reaches
+stay with the original: a test that reaches the header only through another
+header, which still counts as no rewrite reaching it, and an original support
+header that includes it in quotes, which finds its sibling first. Map that
+header too where either matters.
 
 Tests of diagnostics, libc++'s `.verify.cpp` and libstdc++'s `dg-error`, are a
 second pass, and are skipped for now with that reason. So is a test whose
