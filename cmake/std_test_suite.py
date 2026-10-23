@@ -621,11 +621,12 @@ def git(*args: str, cwd: pathlib.Path) -> None:
 
 
 def fetch(suite: Suite, tag: str, take: list[str], tree: pathlib.Path) -> None:
-    """A shallow, partial and sparse checkout of the suite at its tag.
+    """A shallow, partial and sparse checkout of the suite at its tag, or at a commit.
 
     Only the directories taken and the support headers are checked out, and
     only their blobs are downloaded: llvm-project and GCC are far too large to
-    clone whole. A tree already at this tag with this sparse set is reused.
+    clone whole. A tree already at this tag with this sparse set is reused. A
+    development rung pins a full commit hash, since trunk has no tag to name.
     """
     patterns = sorted(set(suite.fetch) | {f"/{t.strip('/')}/" for t in take})
     stamp = tree / ".std-test-suite"
@@ -637,7 +638,10 @@ def fetch(suite: Suite, tag: str, take: list[str], tree: pathlib.Path) -> None:
         git("init", "--quiet", cwd=tree)
         git("remote", "add", "origin", suite.repository, cwd=tree)
     git("sparse-checkout", "set", "--no-cone", *patterns, cwd=tree)
-    git("fetch", "--quiet", "--depth", "1", "--filter=blob:none", "origin", "tag", tag, cwd=tree)
+    if re.fullmatch(r"[0-9a-f]{40}", tag):
+        git("fetch", "--quiet", "--depth", "1", "--filter=blob:none", "origin", tag, cwd=tree)
+    else:
+        git("fetch", "--quiet", "--depth", "1", "--filter=blob:none", "origin", "tag", tag, cwd=tree)
     git("checkout", "--quiet", "--force", tag, cwd=tree)
     stamp.write_text(wanted)
 
