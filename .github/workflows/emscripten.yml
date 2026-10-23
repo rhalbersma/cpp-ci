@@ -98,13 +98,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Emscripten
-        uses: rhalbersma/cpp-ci/.github/actions/install-emsdk@196a3cb571dbf0e9e7b104b4586694753299553a
+        uses: rhalbersma/cpp-ci/.github/actions/install-emsdk@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
         with:
           version: ${{ inputs.emsdk_version }}
 
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@196a3cb571dbf0e9e7b104b4586694753299553a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
 
       - name: Report toolchain versions
         run: |
@@ -122,10 +122,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@196a3cb571dbf0e9e7b104b4586694753299553a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@196a3cb571dbf0e9e7b104b4586694753299553a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
         with:
           triplet: ${{ env.TRIPLET }}
           features: ${{ inputs.vcpkg_features }}

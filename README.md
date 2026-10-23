@@ -386,6 +386,54 @@ rather than running it on pull requests.
     uses: rhalbersma/cpp-ci/.github/workflows/s390x.yml@<sha> # <version>
 ```
 
+#### Mobile targets
+
+Two workflows build for the phone platforms, arm64 only, with one leg per
+supported release of the operating system:
+
+| Target | Workflow | Legs | Toolchain | Tests run under |
+| :----- | :------- | :--- | :-------- | :-------------- |
+| Android | [`android-ndk.yml`](.github/workflows/android-ndk.yml) | API 35, 36 and 37: Android 15, 16 and 17 | NDK r30: Android Clang 21 and its libc++ | `qemu-aarch64`, user-mode |
+| iOS | [`ios.yml`](.github/workflows/ios.yml) | iOS 18, 26 and 27 | Xcode 26.3 on `macos-15`, 26.6 on `macos-26`, 27 on `xcode-27` | the iOS Simulator of the leg's release |
+
+What they check is that the caller's language and library use builds and passes
+its tests on each platform's toolchain and standard library, at each release's
+level. Packaging, signing and running on a device are an app's concern, not a
+library's.
+
+**Android.** One NDK serves every API level, as its sysroot carries each
+level's bionic headers and startup objects, so the legs differ in what they are
+compiled against: a call the level lacks fails there. Executables link bionic
+and libc++ statically and run on the runner's kernel, with no Android loader or
+system image, so the tests exercise the code on arm64 bionic rather than on a
+device's release of Android. The dependencies come from `arm64-android-ndk`,
+an overlay triplet building them with the same NDK at the same level, and its
+toolchain file, which takes CMake's own Android support over the NDK's legacy
+one, is chainloaded for the caller's project too.
+
+**iOS.** The deployment target turns libc++'s availability markup on, so a
+library call the oldest supported release lacks fails to compile, and the
+simulator runtime carries that release's own libc++ dylib, so one it ships
+wrongly fails its test. Each image ships the simulator runtimes of its own
+Xcodes only, so a leg runs on the image that has its release and builds with
+the newest Xcode there: an app supporting iOS 18 builds with a current Xcode
+at an 18.0 deployment target, not with the Xcode that first shipped the iOS 18
+SDK. The dependencies come from `arm64-ios-simulator-xcode`, built with the
+same Xcode at the same deployment target.
+
+Both take Debug by default. The Android leg, like the s390x one, defaults
+`debug_flags` to `-g1 -O1`: unoptimized code is the emulator's worst case, and
+one Boost.Hash2 test of xstd-misc takes 274 s under it at `-O0` against 1 s at
+`-O1`. Each workflow's gate is `<job> / all`.
+
+```yaml
+  android:
+    uses: rhalbersma/cpp-ci/.github/workflows/android-ndk.yml@<sha> # <version>
+
+  ios:
+    uses: rhalbersma/cpp-ci/.github/workflows/ios.yml@<sha> # <version>
+```
+
 #### `visual-studio.yml`
 
 One workflow stubbed twice, once per toolset, which is what a caller's README

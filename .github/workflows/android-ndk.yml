@@ -1,0 +1,273 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Android NDK
+
+permissions:
+  contents: read
+
+# No concurrency group here, for the reason gcc.yml gives.
+
+# arm64-v8a Android through the NDK, one leg per API level, with the tests
+# run under QEMU's user-mode emulator. The default levels are the three
+# newest Android releases: 35, 36 and 37, Android 15, 16 and 17. 64-bit only,
+# since Google Play has required a 64-bit build since 2019 and arm64 is what
+# its devices run.
+#
+# One NDK serves every level, as its sysroot carries each level's bionic
+# headers and startup objects; what a leg checks is that the caller builds
+# against that level's declarations, and that its tests pass on arm64 bionic
+# and the NDK's libc++. Executables link both statically, so they run on the
+# runner's kernel with no Android system image: the tests exercise the code,
+# not a device's release of Android. One NDK rather than a ladder, as in
+# emscripten.yml: the Clang inside it is a rung the clang ladder covers.
+on:
+  workflow_call:
+    inputs:
+      ndk_version:
+        description: >
+          NDK release, as in Google's download file name. r30 is the current
+          LTS release: Android Clang 21 and its libc++, API levels 21 to 37.
+        type: string
+        required: false
+        default: r30
+      ndk_sha1:
+        description: SHA-1 of the ndk_version release's Linux zip.
+        type: string
+        required: false
+        default: 5107f898313790e449e87eee2183d9a20602dee9
+      api_levels:
+        description: Comma-separated Android API levels, one leg each.
+        type: string
+        required: false
+        default: "35,36,37"
+      build_types:
+        description: Comma-separated CMake build types.
+        type: string
+        required: false
+        default: Debug
+      vcpkg_features:
+        description: As in gcc.yml.
+        type: string
+        required: false
+        default: ""
+      cxx_flags:
+        description: Extra flags for the caller.
+        type: string
+        required: false
+        default: ""
+      scan_for_modules:
+        description: As in gcc.yml.
+        type: boolean
+        required: false
+        default: false
+      debug_flags:
+        description: >
+          As in gcc.yml, with -O1 added: unoptimized code is the emulator's
+          worst case. One Boost.Hash2 avalanche test of xstd-misc, an HMAC
+          over SHA3-512, takes 274 s under qemu-aarch64 at -O0 against 0.9 s
+          natively, and 1 s at -O1. A Debug build keeps its assertions either
+          way, since it does not define NDEBUG.
+        type: string
+        required: false
+        default: "-g1 -O1"
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+      build_memory_mib:
+        description: As in gcc.yml.
+        type: number
+        required: false
+        default: 4096
+
+jobs:
+  # strategy.matrix takes no list, as in the ladder workflows.
+  types:
+    name: Resolve the API levels and build types
+    runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.types.outputs.matrix }}
+    steps:
+      - id: types
+        env:
+          API_LEVELS: ${{ inputs.api_levels }}
+          BUILD_TYPES: ${{ inputs.build_types }}
+        run: |
+          set -euo pipefail
+          list() {
+            printf '%s' "$1" | tr -d '[:space:]' | tr ',' '\n' | grep -v '^$' | jq -R . | jq -cs .
+          }
+          jq -cn --argjson api "$(list "$API_LEVELS")" --argjson types "$(list "$BUILD_TYPES")" \
+            '{api_level: $api, build_type: $types}' | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
+
+  build:
+    name: API ${{ matrix.api_level }} ${{ matrix.build_type }}
+    needs: types
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.types.outputs.legs) }}
+    env:
+      TRIPLET: arm64-android-ndk
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+      VCPKG_CACHE_KEY: vcpkg-android-ndk-${{ inputs.ndk_version }}-${{ matrix.api_level }}-
+      # The overlay triplet's toolchain is read again by the vcpkg CMake
+      # integration, so the API level has to outlive the install step.
+      VCPKG_ANDROID_API_LEVEL: ${{ matrix.api_level }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+
+      # From the image's own archive, so no source is added, and named at its
+      # exact candidate version for the reason s390x.yml gives.
+      - name: Install QEMU
+        run: |
+          set -euo pipefail
+          candidate() {
+            apt-cache policy "$1" | awk -v header="$1:" '
+              $0 == header { found = 1; next }
+              /^[^ ]/ { found = 0 }
+              found && $1 == "Candidate:" { print $2; exit }'
+          }
+          for i in 1 2 3 4 5; do
+            sudo apt-get update || true
+            version=$(candidate qemu-user)
+            if [ -n "$version" ] && [ "$version" != "(none)" ] && sudo apt-get install -y --no-install-recommends "qemu-user=${version}"; then
+              break
+            fi
+            if [ "$i" -eq 5 ]; then
+              echo "::error::qemu-user not installed after five attempts"
+              exit 1
+            fi
+            sleep $((i * 10))
+          done
+          if ! command -v qemu-aarch64 > /dev/null; then
+            echo "::error::qemu-aarch64 is not on PATH after its install"
+            exit 1
+          fi
+
+      - name: Install the Android NDK
+        uses: rhalbersma/cpp-ci/.github/actions/install-android-ndk@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+        with:
+          version: ${{ inputs.ndk_version }}
+          sha1: ${{ inputs.ndk_sha1 }}
+
+      # The triplet builds the dependencies with the NDK at the leg's API
+      # level, and its toolchain file is chainloaded for the project too, so
+      # the ports and the tests share one compiler, one libc++ and one level.
+      - name: Locate the overlay triplets
+        id: overlay
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+
+      - name: Report toolchain versions
+        run: |
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" --version
+          qemu-aarch64 --version
+          cmake --version
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
+      - name: Check out vcpkg at the pinned commit
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+
+      - name: Install the test dependencies
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+        with:
+          triplet: ${{ env.TRIPLET }}
+          features: ${{ inputs.vcpkg_features }}
+          overlay_triplets: ${{ steps.overlay.outputs.triplets }}
+
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      # The chainloaded toolchain includes the NDK's own, links executables
+      # statically and sets CMAKE_CROSSCOMPILING_EMULATOR, so ctest runs every
+      # test under qemu-aarch64 with no binfmt registration.
+      - name: Configure
+        shell: bash
+        env:
+          BUILD_TYPE: ${{ matrix.build_type }}
+          CXX_FLAGS: ${{ inputs.cxx_flags }}
+          OVERLAY_TRIPLETS: ${{ steps.overlay.outputs.triplets }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
+          DEBUG_FLAGS: ${{ inputs.debug_flags }}
+          FEATURES: ${{ inputs.vcpkg_features }}
+        run: |
+          set -euo pipefail
+          read -ra extra <<< "$EXTRA_CMAKE"
+          features_arg=""
+          if [ -n "$FEATURES" ]; then
+            features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
+          fi
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$OVERLAY_TRIPLETS/../toolchains/android-ndk.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            ${features_arg:+"$features_arg"} \
+            -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
+            -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
+            -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
+            ${DEBUG_FLAGS:+"-DCMAKE_CXX_FLAGS_DEBUG=$DEBUG_FLAGS"} \
+            "${extra[@]}"
+
+      # Sized by memory, not by CPUs, as in gcc.yml.
+      - name: Build
+        env:
+          BUILD_MEMORY_MIB: ${{ inputs.build_memory_mib }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          available_mib=$(( $(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo) / 1024 ))
+          cpus=$(nproc)
+          jobs=$(( available_mib / BUILD_MEMORY_MIB ))
+          if (( jobs < 1 )); then
+            jobs=1
+          fi
+          if (( jobs > cpus )); then
+            jobs=$cpus
+          fi
+          echo "::notice::Building with $jobs jobs: $available_mib MiB available at $BUILD_MEMORY_MIB MiB each, $cpus CPUs"
+          cmake --build build -v --parallel "$jobs"
+
+      # One test per CPU, for the reason s390x.yml gives.
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel "$(nproc)"
+
+  # One check name that does not move, as in gcc.yml.
+  all:
+    name: all
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless every leg succeeded
+        env:
+          RESULT: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+          echo "legs: $RESULT"
+          test "$RESULT" = success

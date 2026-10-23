@@ -55,10 +55,13 @@ on:
         required: false
         default: false
       debug_flags:
-        description: As in gcc.yml.
+        description: >
+          As in gcc.yml, with -O1 added, for the reason android-ndk.yml
+          gives: unoptimized code is the emulator's worst case, and a Debug
+          build keeps its assertions either way.
         type: string
         required: false
-        default: "-g1"
+        default: "-g1 -O1"
       cmake_args:
         description: Extra -D arguments for the configure step.
         type: string
@@ -110,16 +113,23 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@196a3cb571dbf0e9e7b104b4586694753299553a
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
 
       # From the image's own archive, so no source is added. A package counts
       # as available only where its own name heads apt-cache policy with an
       # install candidate, and the install names that exact version, for the
       # reason install-gcc gives: apt reads a name it cannot find as a regular
       # expression, and g++-15-s390x-linux-gnu is one.
+      #
+      # The ERR trap names the line and the command that failed. On the
+      # ubuntu-26.04 runner this step has exited with apt's status 100
+      # straight after apt-get update, with nothing in the log to say which
+      # command returned it, while the same script passes in an ubuntu:26.04
+      # container.
       - name: Install the s390x cross GCC and QEMU
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          trap 'status=$?; echo "::error::exit $status at line $LINENO: $BASH_COMMAND"' ERR
           candidate() {
             apt-cache policy "$1" | awk -v header="$1:" '
               $0 == header { found = 1; next }
@@ -157,7 +167,7 @@ jobs:
       # the tests share one compiler, one libstdc++ and one emulator.
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@196a3cb571dbf0e9e7b104b4586694753299553a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
 
       - name: Report toolchain versions
         run: |
@@ -176,10 +186,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@196a3cb571dbf0e9e7b104b4586694753299553a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@196a3cb571dbf0e9e7b104b4586694753299553a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
         with:
           triplet: ${{ env.TRIPLET }}
           features: ${{ inputs.vcpkg_features }}
