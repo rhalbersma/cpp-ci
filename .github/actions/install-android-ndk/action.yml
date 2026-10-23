@@ -1,0 +1,49 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Install the Android NDK
+description: >
+  Download one Android NDK release from Google, check it against the SHA-1
+  Google publishes for it, and export ANDROID_NDK_HOME, which the
+  arm64-android-ndk overlay triplet and its toolchain read. The runner image
+  carries NDKs of its own, but which ones moves with the image, so a leg
+  pinned to a release fetches that release. One NDK serves every API level:
+  its sysroot holds the headers and startup objects of each, from 21 up.
+
+inputs:
+  version:
+    description: NDK release, e.g. "r30", as in Google's download file name.
+    required: true
+  sha1:
+    description: >
+      SHA-1 of android-ndk-<version>-linux.zip, from the NDK downloads page.
+      Google publishes no stronger digest.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA1: ${{ inputs.sha1 }}
+      run: |
+        set -euo pipefail
+        zip="$RUNNER_TEMP/android-ndk-${VERSION}-linux.zip"
+        for i in 1 2 3; do
+          if curl -fsSL "https://dl.google.com/android/repository/android-ndk-${VERSION}-linux.zip" -o "$zip"; then break; fi
+          if [ "$i" -eq 3 ]; then
+            echo "::error::could not download android-ndk-${VERSION}-linux.zip"
+            exit 1
+          fi
+          sleep $((i * 10))
+        done
+        echo "${SHA1}  ${zip}" | sha1sum --check --quiet
+        unzip -q "$zip" -d "$RUNNER_TEMP"
+        rm "$zip"
+        root="$RUNNER_TEMP/android-ndk-${VERSION}"
+        echo "ANDROID_NDK_HOME=$root" >> "$GITHUB_ENV"
+        grep -E '^Pkg\.(Revision|ReleaseName)' "$root/source.properties"
+        "$root/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" --version
