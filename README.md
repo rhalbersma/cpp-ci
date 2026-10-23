@@ -747,6 +747,7 @@ caller rather than this repository.
 | `apt-retry` | Set the retry key apt actually reads, and drop the image's unused Microsoft source, once per job |
 | `install-gcc` | A GCC release from the toolchain PPA, or from the Launchpad librarian when the PPA's mirror is down; or the trunk snapshot |
 | `install-clang` | A Clang from apt.llvm.org, optionally with libc++ |
+| `install-android-ndk` | One Android NDK release from Google, checked against its published SHA-1, for every API level |
 | `vcpkg-setup` | Check out and bootstrap vcpkg at this repository's pinned commit, in place of the runner image's |
 | `vcpkg-overlay` | Locate the overlay triplets, which live here rather than in each caller |
 | `vcpkg-install` | `vcpkg install`, retried around a download vcpkg will not retry |
@@ -755,7 +756,7 @@ caller rather than this repository.
 
 Anything a workflow needs to read from here therefore has to arrive as an
 action: an action is fetched from its own repository and `GITHUB_ACTION_PATH`
-points at it. That is why the overlay triplets are an action rather than six
+points at it. That is why the overlay triplets are an action rather than eight
 files copied into four repositories, and why the clang-tidy passes and the
 coverage gate are scripts behind actions: a developer then runs before pushing
 the very scripts CI runs.
