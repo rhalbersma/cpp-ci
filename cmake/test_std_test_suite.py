@@ -225,6 +225,57 @@ class Registration(unittest.TestCase):
             self.assertNotIn("std_test_suite_add(", (out / "tests.cmake").read_text())
             self.assertIn('"kind": "skip"', (out / "manifest.json").read_text())
 
+    def support_tree(self, root, helper, mapping_text):
+        # libc++'s charconv test calls std::to_chars only from its support header, never from the test.
+        tree, out = root / "tree", root / "build" / "libcxx"
+        (tree / "libcxx/test/std/utilities/charconv").mkdir(parents=True)
+        (tree / "libcxx/test/support").mkdir(parents=True)
+        (tree / "libcxx/test/std/utilities/charconv/integral.pass.cpp").write_text('#include "charconv_test_helpers.h"\nint main() { test(); }\n')
+        (tree / "libcxx/test/support/charconv_test_helpers.h").write_text(helper)
+        mapping = root / "m.toml"
+        mapping.write_text(mapping_text)
+        argv = ["--suite", "libcxx", "--mapping", str(mapping), "--tree", str(tree), "--binary-dir", str(out), "--tag", "llvmorg-22.1.8", "--offline"]
+        argv += ["--compiler", "clang", "--version", "22.1.8", "--stdlib", "libc++", "--std", "26", "--target", "x86_64-pc-linux-gnu"]
+        return tree, out, argv
+
+    TAKE = '[libcxx]\ntake = [{ path = "libcxx/test/std/utilities/charconv" }]\nrewrite = [{ from = "std::to_chars(", to = "xstd::to_chars(" }]\n'
+    HELPER = "#pragma once\ninline void test() { std::to_chars(buf, buf, 1); }\n"
+
+    def test_support_header_without_mapping(self):
+        # Without the header in the mapping, nothing reaches the test, which then tests the standard library.
+        with tempfile.TemporaryDirectory() as root:
+            _, out, argv = self.support_tree(pathlib.Path(root), self.HELPER, self.TAKE)
+            self.assertEqual(sts.main(argv), 0)
+            self.assertNotIn("std_test_suite_add(", (out / "tests.cmake").read_text())
+
+    def test_support_header_rewritten(self):
+        with tempfile.TemporaryDirectory() as root:
+            tree, out, argv = self.support_tree(pathlib.Path(root), self.HELPER, self.TAKE + 'support = [{ path = "libcxx/test/support/charconv_test_helpers.h" }]\n')
+            self.assertEqual(sts.main(argv), 0)
+            self.assertIn("xstd::to_chars(buf, buf, 1);", (out / "support/charconv_test_helpers.h").read_text())
+            cmake = (out / "tests.cmake").read_text()
+            self.assertIn("std_test_suite_add(libcxx.utilities.charconv.integral ", cmake)
+            # The copy comes before the original, so the test's include finds it first.
+            self.assertIn(f'set(STD_TEST_SUITE_INCLUDE_DIRS_libcxx "{(out / "support").as_posix()}" "{(tree / "libcxx/test/support").as_posix()}")', cmake)
+            self.assertIn('"name": "charconv_test_helpers.h"', (out / "manifest.json").read_text())
+
+    def test_support_header_exception(self):
+        # A per-line exception may name a support header as well as a test.
+        digest = sts.sha256(self.HELPER.encode())
+        exception = f'[[libcxx.assertion]]\nfile = "libcxx/test/support/charconv_test_helpers.h"\nsha256 = "{digest}"\nline = "#pragma once"\nto = "#pragma once // guarded"\ndeparture = "d"\n'
+        with tempfile.TemporaryDirectory() as root:
+            _, out, argv = self.support_tree(pathlib.Path(root), self.HELPER, self.TAKE + 'support = [{ path = "libcxx/test/support/charconv_test_helpers.h" }]\n' + exception)
+            self.assertEqual(sts.main(argv), 0)
+            self.assertIn("// std-test-suite: d", (out / "support/charconv_test_helpers.h").read_text())
+
+    def test_support_header_stale(self):
+        # A header no rewrite changes, one that is not there, and one outside the support headers all fail.
+        for support in ("libcxx/test/support/test_macros.h", "libcxx/test/support/missing.h", "libcxx/test/std/utilities/charconv/integral.pass.cpp"):
+            with tempfile.TemporaryDirectory() as root:
+                tree, _, argv = self.support_tree(pathlib.Path(root), self.HELPER, self.TAKE + f'support = [{{ path = "{support}" }}]\n')
+                (tree / "libcxx/test/support/test_macros.h").write_text("#pragma once\n")
+                self.assertEqual(sts.main(argv), 1, support)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,10 +17,11 @@ What is the consumer's and what is the suite's are kept apart:
 
   the suite's     where it lives, its pinned tag, its support headers, and how
                   its markers read; all of it here, written once
-  the consumer's  the mapping: the directories to take, the spelling to
-                  rewrite, the cases expected to fail by design, and the
-                  per-assertion exceptions; TOML files in the consuming
-                  repository, passed with --mapping
+  the consumer's  the mapping: the directories to take, the support headers
+                  to rewrite beside them, the spelling to rewrite, the cases
+                  expected to fail by design, and the per-assertion
+                  exceptions; TOML files in the consuming repository, passed
+                  with --mapping
 
 A mapping entry that has gone stale is an error, never a silent pass: an
 expected failure or an exception naming a file the tree no longer has, a file
@@ -641,6 +642,10 @@ class Mapping:
 
     take        directories to take, each with an optional select: a regular
                 expression a file's contents must match to be taken at all
+    support     support headers to rewrite as a test is, for a suite that
+                calls what the library mirrors from a helper rather than from
+                the test itself; the copy shadows the original on the include
+                path, and a test including it counts as one a rewrite reaches
     include     headers prepended to every rewritten test
     rewrite     regular expressions and their replacements, applied in order
     expect      files expected to fail at compile or run, each with its hash
@@ -651,6 +656,7 @@ class Mapping:
     """
 
     take: list[dict] = dataclasses.field(default_factory=list)
+    support: list[dict] = dataclasses.field(default_factory=list)
     include: list[str] = dataclasses.field(default_factory=list)
     rewrite: list[dict] = dataclasses.field(default_factory=list)
     expect: list[dict] = dataclasses.field(default_factory=list)
@@ -663,6 +669,7 @@ class Mapping:
 # expected failure or an exception silently unread.
 MAPPING_KEYS: dict[str, tuple[set[str], set[str]] | None] = {
     "take": ({"path"}, {"select"}),
+    "support": ({"path"}, set()),
     "include": None,
     "rewrite": ({"to"}, {"from", "regex"}),
     "expect": ({"file", "sha256", "fails", "paragraph"}, set()),
@@ -808,9 +815,48 @@ def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping,
             tests.append(test)
     for path in sorted(set(expected) - seen):
         errors.append(f"{path}: expected to fail, but no taken directory holds it at this tag")
-    for path in sorted({a["file"] for a in mapping.assertion} - seen):
+    supported = {s["path"].strip("/") for s in mapping.support}
+    for path in sorted({a["file"] for a in mapping.assertion} - seen - supported):
         errors.append(f"{path}: has exceptions, but no taken directory holds it at this tag")
     return tests
+
+
+def rewrite_support(suite: Suite, tree: pathlib.Path, out: pathlib.Path, mapping: Mapping, errors: list[str]) -> list[dict]:
+    """The build-tree copy of each support header the mapping names, under the name a test includes it by.
+
+    A header that does not exist at this tag, lies outside the suite's support
+    headers, or that no rewrite changes, is an error: each is a mapping entry
+    that no longer does what it was written for.
+    """
+    records = []
+    for entry in mapping.support:
+        path = entry["path"].strip("/")
+        root = next((s for s in suite.support if path.startswith(s + "/")), None)
+        if root is None:
+            errors.append(f"support {path}: not under the suite's support headers, {', '.join(suite.support)}")
+            continue
+        file = tree / path
+        if not file.is_file():
+            errors.append(f"support {path}: not a file at this tag")
+            continue
+        data = file.read_bytes()
+        digest = sha256(data)
+        rewritten, applied, touched = rewrite(data.decode("utf-8", errors="replace"), path, digest, mapping, errors)
+        if not touched:
+            errors.append(f"support {path}: no rewrite changes it")
+            continue
+        name = path.removeprefix(root + "/")
+        copy = out / "support" / name
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        if not copy.is_file() or copy.read_text() != rewritten:
+            copy.write_text(rewritten)
+        records.append({"path": path, "sha256": digest, "name": name, "exceptions": applied})
+    return records
+
+
+def includes_any(text: str, names: Iterable[str]) -> bool:
+    """Whether the text includes one of these headers by name, in quotes or angle brackets."""
+    return any(re.search(r"#\s*include\s*[\"<]" + re.escape(name) + r"[\">]", text) for name in names)
 
 
 def target_name(suite_name: str, suite: Suite, path: str) -> str:
@@ -857,6 +903,7 @@ def main(argv: list[str] | None = None) -> int:
     tests = collect(args.suite, suite, args.tree, mapping, config, errors)
 
     out = args.binary_dir
+    support = rewrite_support(suite, args.tree, out, mapping, errors)
     sources = out / "tests"
     calls = []
     for test in tests:
@@ -865,7 +912,7 @@ def main(argv: list[str] | None = None) -> int:
         text = (args.tree / test.path).read_bytes().decode("utf-8", errors="replace")
         rewritten, test.exceptions, touched = rewrite(text, test.path, test.sha256, mapping, errors)
         # A test no rewrite reaches still names only the standard library's types, and would pass on its account.
-        if not touched:
+        if not touched and not includes_any(text, (s["name"] for s in support)):
             if test.expect and not test.paragraph.startswith("the suite's own"):
                 errors.append(f"{test.path}: expected to fail, but no rewrite reaches it")
             test.kind, test.reason, test.expect, test.paragraph = "skip", "no rewrite reaches it, so it tests the standard library", "", ""
@@ -888,7 +935,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"std_test_suite: {error}", file=sys.stderr)
         return 1
 
-    includes = " ".join(cmake_quote((args.tree / s).as_posix()) for s in suite.support)
+    # The rewritten support headers come first, so a test's include finds the copy before the original.
+    roots = ([out / "support"] if support else []) + [args.tree / s for s in suite.support]
+    includes = " ".join(cmake_quote(r.as_posix()) for r in roots)
     body = [
         f"# Generated by std_test_suite.py for {args.suite} at {tag}; do not edit.",
         f"set(STD_TEST_SUITE_INCLUDE_DIRS_{args.suite.replace('-', '_')} {includes})",
@@ -904,6 +953,7 @@ def main(argv: list[str] | None = None) -> int:
         "suite": args.suite,
         "repository": suite.repository,
         "tag": tag,
+        "support": [{k: v for k, v in s.items() if v} for s in support],
         "tests": [{k: v for k, v in dataclasses.asdict(t).items() if v or k in ("path", "sha256", "kind")} for t in tests],
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -911,7 +961,8 @@ def main(argv: list[str] | None = None) -> int:
     for test in tests:
         key = f"expected {test.expect} failure" if test.expect else test.kind
         counts[key] = counts.get(key, 0) + 1
-    print(f"std_test_suite: {args.suite} at {tag}: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
+    rewritten_headers = f", {len(support)} rewritten support header{'s' if len(support) != 1 else ''}" if support else ""
+    print(f"std_test_suite: {args.suite} at {tag}: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())) + rewritten_headers)
     return 0
 
 
