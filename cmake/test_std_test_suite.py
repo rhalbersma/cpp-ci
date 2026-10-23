@@ -107,6 +107,16 @@ class Libstdcxx(unittest.TestCase):
         self.assertEqual(self.classify("// { dg-do run { xfail *-*-darwin8.[0-4].* } }\n")[3], "")
         self.assertNotEqual(self.classify("// { dg-do run { xfail *-*-* } }\n")[3], "")
 
+    def test_xfail_run_if(self):
+        body = '// { dg-do run { target c++20 } }\n// { dg-xfail-run-if "assert should fail" { *-*-* } }\n'
+        self.assertNotEqual(self.classify(body)[3], "")
+        body = '// { dg-do run }\n// { dg-xfail-run-if "" { *-*-* } { "-D_GLIBCXX_DEBUG" } }\n'
+        self.assertEqual(self.classify(body)[3], "")
+        body = '// { dg-do run }\n// { dg-xfail-run-if "" { powerpc64-*-freebsd* } }\n'
+        self.assertEqual(self.classify(body)[3], "")
+        body = '// { dg-do compile }\n// { dg-xfail-run-if "" { *-*-* } }\n'
+        self.assertEqual(self.classify(body)[3], "")
+
     def test_requirements(self):
         self.assertEqual(self.classify("// { dg-require-effective-target exceptions_enabled }\n")[0], "run")
         self.assertEqual(self.classify("// { dg-require-normal-mode \"\" }\n")[0], "skip")

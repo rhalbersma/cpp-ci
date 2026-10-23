@@ -794,7 +794,7 @@ them.
 | Suite | Fetched from | Pinned by | Runnable tests | Markers read | Support headers |
 | :---- | :----------- | :-------- | :------------- | :----------- | :-------------- |
 | `libcxx` | `llvm/llvm-project` | `clang` stable | `*.pass.cpp`, `*.compile.pass.cpp`, `*.link.pass.cpp` | `REQUIRES`, `UNSUPPORTED`, `XFAIL`, `ADDITIONAL_COMPILE_FLAGS` | `libcxx/test/support/` |
-| `libstdcxx` | `gcc-mirror/gcc` | `gcc` stable | `*.cc` | `dg-do`, `dg-options`, `dg-additional-options`, `dg-require-*`, `dg-skip-if` | `libstdc++-v3/testsuite/util/` |
+| `libstdcxx` | `gcc-mirror/gcc` | `gcc` stable | `*.cc` | `dg-do`, `dg-options`, `dg-additional-options`, `dg-require-*`, `dg-skip-if`, `dg-xfail-run-if` | `libstdc++-v3/testsuite/util/` |
 | `msvc-stl` | `microsoft/STL` | `msvc` stable | `tests/std/tests/*/test.cpp` | the test directory's `env.lst` | `tests/std/include/` |
 
 The pin is the `test_suite` key on the family's rung in
@@ -849,9 +849,10 @@ The adapter is strict where silence would mislead:
   exception that names a file the tree no longer has, a hash its file no
   longer matches, or a line its file no longer carries, is an error. An
   upstream edit to a test is therefore reviewed, never carried forward.
-- **An expected failure that starts passing turns red.** One expected at run is
-  registered `WILL_FAIL`. One expected at compile is left out of `all` and
-  registered as a build of its target that must fail.
+- **An expected failure that starts passing turns red.** One expected at run
+  must exit non-zero or crash, as a failed `assert` does, which `WILL_FAIL`
+  alone would count as a failure. One expected at compile is left out of `all`
+  and registered as a build of its target that must fail.
 - **A test no rewrite reaches is skipped, with that reason.** It still names
   only the standard library's own types, and would pass on their account. A
   test that includes a rewritten support header counts as reached.
