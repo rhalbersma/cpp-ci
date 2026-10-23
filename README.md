@@ -794,12 +794,15 @@ them.
 | Suite | Fetched from | Pinned by | Runnable tests | Markers read | Support headers |
 | :---- | :----------- | :-------- | :------------- | :----------- | :-------------- |
 | `libcxx` | `llvm/llvm-project` | `clang` stable | `*.pass.cpp`, `*.compile.pass.cpp`, `*.link.pass.cpp` | `REQUIRES`, `UNSUPPORTED`, `XFAIL`, `ADDITIONAL_COMPILE_FLAGS` | `libcxx/test/support/` |
-| `libstdcxx` | `gcc-mirror/gcc` | `gcc` stable | `*.cc` | `dg-do`, `dg-options`, `dg-additional-options`, `dg-require-*`, `dg-skip-if` | `libstdc++-v3/testsuite/util/` |
+| `libstdcxx` | `gcc-mirror/gcc` | `gcc` stable and development | `*.cc` | `dg-do`, `dg-options`, `dg-additional-options`, `dg-require-*`, `dg-skip-if`, `dg-xfail-run-if` | `libstdc++-v3/testsuite/util/` |
 | `msvc-stl` | `microsoft/STL` | `msvc` stable | `tests/std/tests/*/test.cpp` | the test directory's `env.lst` | `tests/std/include/` |
 
 The pin is the `test_suite` key on the family's rung in
 [`toolchains.json`](.github/actions/toolchain/toolchains.json), so moving a
-rung moves its suite in the same edit. The clone is shallow, partial
+rung moves its suite in the same edit. A release rung pins a tag; trunk has
+none, so `gcc` development pins a full commit hash, which a bump moves like any
+other pin while the snapshot compiler it runs on stays unpinned. Pass
+`RUNG development` to read the trunk suite. The clone is shallow, partial
 (`--filter=blob:none`) and sparse, covering the directories the caller takes
 and the support headers. Nothing is vendored: the suites are Apache-2.0 WITH
 LLVM-exception and GPL-3.0 WITH GCC-RLE, and the tests are rewritten in the
@@ -837,8 +840,10 @@ Each runnable test becomes its own executable and CTest test, labelled
 `std-test-suite` and its suite, and a compile test becomes an object library.
 The target `std-test-suite-<suite>` builds all of them. The markers are read
 against what CMake already knows: the compiler and its version, the standard
-library, `CMAKE_CXX_STANDARD`, the target triple, and whether exceptions and
-RTTI are on. A test's own `-std=` gives way to the caller's. libstdc++'s
+library, the dialect, the target triple, and whether exceptions and RTTI are
+on. The dialect is a `-std=` in `CMAKE_CXX_FLAGS` where there is one, for a
+standard CMake cannot yet name such as `-std=gnu++2d`, and `CMAKE_CXX_STANDARD`
+otherwise. A test's own `-std=` gives way to the caller's. libstdc++'s
 support headers include its internal headers, so its suite builds only against
 libstdc++, under GCC or Clang; against another standard library every test is
 skipped with that reason.
@@ -849,9 +854,10 @@ The adapter is strict where silence would mislead:
   exception that names a file the tree no longer has, a hash its file no
   longer matches, or a line its file no longer carries, is an error. An
   upstream edit to a test is therefore reviewed, never carried forward.
-- **An expected failure that starts passing turns red.** One expected at run is
-  registered `WILL_FAIL`. One expected at compile is left out of `all` and
-  registered as a build of its target that must fail.
+- **An expected failure that starts passing turns red.** One expected at run
+  must exit non-zero or crash, as a failed `assert` does, which `WILL_FAIL`
+  alone would count as a failure. One expected at compile is left out of `all`
+  and registered as a build of its target that must fail.
 - **A test no rewrite reaches is skipped, with that reason.** It still names
   only the standard library's own types, and would pass on their account. A
   test that includes a rewritten support header counts as reached.

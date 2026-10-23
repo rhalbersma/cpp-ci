@@ -429,6 +429,7 @@ def libstdcxx_classify(path: str, text: str, config: Config) -> tuple[str, str, 
     kind, xfail = "run", ""
     options: list[str] = []
     skips: list[tuple[list[str], str]] = []
+    run_xfails: list[tuple[list[str], str]] = []
     for m in DG_DIRECTIVE.finditer(text):
         directive, words = m.group(1), dg_words(m.group(2))
         if directive == "dg-do":
@@ -457,6 +458,8 @@ def libstdcxx_classify(path: str, text: str, config: Config) -> tuple[str, str, 
                 return "skip", directive, [], ""
         elif directive == "dg-skip-if":
             skips.append((words, m.group(0)))
+        elif directive == "dg-xfail-run-if":
+            run_xfails.append((words, m.group(0)))
         elif directive == "dg-add-options":
             if words and unbrace(words[0]) not in ("no_pch",):
                 return "skip", f"dg-add-options {unbrace(words[0])}, which this adapter does not interpret", [], ""
@@ -466,17 +469,24 @@ def libstdcxx_classify(path: str, text: str, config: Config) -> tuple[str, str, 
     # decided whether the test applies to it.
     options = [o for o in options if not o.startswith("-std=")]
     for words, directive in skips:
-        selector = words[1] if len(words) > 1 else "{ *-*-* }"
-        include = shlex.split(unbrace(words[2])) if len(words) > 2 else []
-        exclude = shlex.split(unbrace(words[3])) if len(words) > 3 else []
-        if not dg_selector(selector, config):
-            continue
-        if include and include != ["*"] and not all(o in options for o in include):
-            continue
-        if any(o in options for o in exclude):
-            continue
-        return "skip", directive, [], ""
+        if dg_options_selected(words, options, config):
+            return "skip", directive, [], ""
+    for words, directive in run_xfails:
+        if kind == "run" and dg_options_selected(words, options, config):
+            xfail = directive
     return kind, "", options, xfail
+
+
+def dg_options_selected(words: list[str], options: list[str], config: Config) -> bool:
+    """Whether a dg-skip-if or dg-xfail-run-if applies: its target selector holds, its include options are all given and its exclude options none."""
+    selector = words[1] if len(words) > 1 else "{ *-*-* }"
+    include = shlex.split(unbrace(words[2])) if len(words) > 2 else []
+    exclude = shlex.split(unbrace(words[3])) if len(words) > 3 else []
+    if not dg_selector(selector, config):
+        return False
+    if include and include != ["*"] and not all(o in options for o in include):
+        return False
+    return not any(o in options for o in exclude)
 
 
 # ---------------------------------------------------------------------------
@@ -611,11 +621,12 @@ def git(*args: str, cwd: pathlib.Path) -> None:
 
 
 def fetch(suite: Suite, tag: str, take: list[str], tree: pathlib.Path) -> None:
-    """A shallow, partial and sparse checkout of the suite at its tag.
+    """A shallow, partial and sparse checkout of the suite at its tag, or at a commit.
 
     Only the directories taken and the support headers are checked out, and
     only their blobs are downloaded: llvm-project and GCC are far too large to
-    clone whole. A tree already at this tag with this sparse set is reused.
+    clone whole. A tree already at this tag with this sparse set is reused. A
+    development rung pins a full commit hash, since trunk has no tag to name.
     """
     patterns = sorted(set(suite.fetch) | {f"/{t.strip('/')}/" for t in take})
     stamp = tree / ".std-test-suite"
@@ -627,7 +638,10 @@ def fetch(suite: Suite, tag: str, take: list[str], tree: pathlib.Path) -> None:
         git("init", "--quiet", cwd=tree)
         git("remote", "add", "origin", suite.repository, cwd=tree)
     git("sparse-checkout", "set", "--no-cone", *patterns, cwd=tree)
-    git("fetch", "--quiet", "--depth", "1", "--filter=blob:none", "origin", "tag", tag, cwd=tree)
+    if re.fullmatch(r"[0-9a-f]{40}", tag):
+        git("fetch", "--quiet", "--depth", "1", "--filter=blob:none", "origin", tag, cwd=tree)
+    else:
+        git("fetch", "--quiet", "--depth", "1", "--filter=blob:none", "origin", "tag", tag, cwd=tree)
     git("checkout", "--quiet", "--force", tag, cwd=tree)
     stamp.write_text(wanted)
 

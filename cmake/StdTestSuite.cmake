@@ -19,11 +19,12 @@
 #
 # <suite> is libcxx, libstdcxx or msvc-stl. Each runnable test becomes its own
 # executable and CTest test, labelled std-test-suite and <suite>; a compile
-# test becomes an object library. A test the mapping expects to fail at run is
-# registered WILL_FAIL; one expected to fail at compile is left out of all and
-# registered as a build of its target that must fail, so an expected failure
-# that starts passing turns red rather than staying excused. The target
-# std-test-suite-<suite> builds every test that is meant to build.
+# test becomes an object library. A test the suite or the mapping expects to
+# fail at run must exit non-zero or crash; one expected to fail at compile is
+# left out of all and registered as a build of its target that must fail, so
+# an expected failure that starts passing turns red rather than staying
+# excused. The target std-test-suite-<suite> builds every test that is meant
+# to build.
 #
 # Needs git and a Python of 3.11 or later, for tomllib. A consumer reaches this
 # module through FetchContent of this repository at the commit its workflows
@@ -32,6 +33,7 @@
 include_guard(GLOBAL)
 
 set(STD_TEST_SUITE_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/std_test_suite.py")
+set(STD_TEST_SUITE_EXPECT_FAILURE "${CMAKE_CURRENT_LIST_DIR}/std_test_suite_expect_failure.cmake")
 
 function(std_test_suite_add name)
         cmake_parse_arguments(PARSE_ARGV 1 arg "" "SUITE;KIND;SOURCE;EXPECT" "INCLUDE_DIRS;OPTIONS")
@@ -53,12 +55,13 @@ function(std_test_suite_add name)
                 add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name} --config $<CONFIG>)
                 # Builds of a shared tree do not run side by side.
                 set_tests_properties(${name} PROPERTIES WILL_FAIL TRUE LABELS "${labels}" RESOURCE_LOCK std-test-suite-build)
+        elseif(arg_KIND STREQUAL "run" AND arg_EXPECT STREQUAL "run")
+                # WILL_FAIL would count a failed assert's abort as a failure, not the one expected.
+                add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -DTEST=$<TARGET_FILE:${name}> -P ${STD_TEST_SUITE_EXPECT_FAILURE})
+                set_tests_properties(${name} PROPERTIES LABELS "${labels}")
         elseif(arg_KIND STREQUAL "run")
                 add_test(NAME ${name} COMMAND ${name})
                 set_tests_properties(${name} PROPERTIES LABELS "${labels}")
-                if(arg_EXPECT STREQUAL "run")
-                        set_tests_properties(${name} PROPERTIES WILL_FAIL TRUE)
-                endif()
         endif()
 endfunction()
 
@@ -108,12 +111,23 @@ function(std_test_suite suite)
                 execute_process(COMMAND ${CMAKE_CXX_COMPILER} -dumpmachine OUTPUT_VARIABLE target OUTPUT_STRIP_TRAILING_WHITESPACE)
         endif()
 
+        # The dialect the markers are read against: a -std= in the flags, for one CMake cannot yet name, or else CMAKE_CXX_STANDARD.
+        set(flags "${CMAKE_CXX_FLAGS}")
         set(std ${CMAKE_CXX_STANDARD})
+        if(flags MATCHES "-std=(c|gnu)\\+\\+([0-9][0-9a-z])")
+                # A draft's spelling stands for its standard's year, and 98 for 03, the dialect it shares.
+                set(year ${CMAKE_MATCH_2})
+                foreach(draft IN ITEMS 98:03 0x:11 1y:14 1z:17 2a:20 2b:23 2c:26 2d:29)
+                        if(draft MATCHES "^${year}:(..)$")
+                                set(year ${CMAKE_MATCH_1})
+                        endif()
+                endforeach()
+                string(REGEX REPLACE "^0" "" std ${year})
+        endif()
         if(NOT std)
                 message(FATAL_ERROR "std_test_suite(${suite}): set CMAKE_CXX_STANDARD, the dialect the suites' markers are read against")
         endif()
 
-        set(flags "${CMAKE_CXX_FLAGS}")
         set(extra)
         if(flags MATCHES "-fno-exceptions")
                 list(APPEND extra --no-exceptions)
