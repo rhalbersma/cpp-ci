@@ -1,0 +1,238 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: iOS
+
+permissions:
+  contents: read
+
+# No concurrency group here, for the reason gcc.yml gives.
+
+# arm64 iOS, one leg per supported release, with the tests run inside the
+# iOS Simulator. The default releases are the three Apple supports: 18, 26
+# and 27. Each leg builds at its release's deployment target, which is what
+# turns libc++'s availability markup on, and runs on that release's own
+# simulator runtime, which carries that release's libc++ dylib: a library
+# call the release lacks fails to compile, and one it ships wrongly fails its
+# test.
+#
+# The Xcode is the newest on the image that has the release's simulator
+# runtime, since each image ships the runtimes of its own Xcodes only. An app
+# supporting iOS 18 is built with a current Xcode at an 18.0 deployment
+# target, so the iOS 18 leg does the same with the newest Xcode on macos-15,
+# rather than with the Xcode 16 that first shipped the iOS 18 SDK.
+on:
+  workflow_call:
+    inputs:
+      ios_versions:
+        description: >
+          Comma-separated iOS major releases, one leg each, among those the
+          legs table in the types job lists.
+        type: string
+        required: false
+        default: "18,26,27"
+      build_types:
+        description: Comma-separated CMake build types.
+        type: string
+        required: false
+        default: Debug
+      vcpkg_features:
+        description: As in gcc.yml.
+        type: string
+        required: false
+        default: ""
+      cxx_flags:
+        description: Extra flags for the caller.
+        type: string
+        required: false
+        default: ""
+      scan_for_modules:
+        description: As in gcc.yml.
+        type: boolean
+        required: false
+        default: false
+      debug_flags:
+        description: As in gcc.yml.
+        type: string
+        required: false
+        default: "-g1"
+      cmake_args:
+        description: Extra -D arguments for the configure step.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  # strategy.matrix takes no list, as in the ladder workflows. Each release
+  # names the runner image whose simulator runtimes include it, the Xcode on
+  # that image that builds it, and the deployment target its leg builds at.
+  types:
+    name: Resolve the iOS releases and build types
+    runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.types.outputs.matrix }}
+    steps:
+      - id: types
+        env:
+          IOS_VERSIONS: ${{ inputs.ios_versions }}
+          BUILD_TYPES: ${{ inputs.build_types }}
+        run: |
+          set -euo pipefail
+          legs='{
+            "18": {"runner": "macos-15", "xcode": "Xcode_26.3", "deployment_target": "18.0"},
+            "26": {"runner": "macos-26", "xcode": "Xcode_26.6", "deployment_target": "26.0"},
+            "27": {"runner": "xcode-27", "xcode": "Xcode_27", "deployment_target": "27.0"}
+          }'
+          list() {
+            printf '%s' "$1" | tr -d '[:space:]' | tr ',' '\n' | grep -v '^$' | jq -R . | jq -cs .
+          }
+          jq -cn --argjson legs "$legs" --argjson ios "$(list "$IOS_VERSIONS")" --argjson types "$(list "$BUILD_TYPES")" '
+            {include: [$ios[] as $v | $types[] as $t
+              | ($legs[$v] // error("no iOS \($v) leg: the legs table lists \($legs | keys | join(", "))"))
+              + {ios: $v, build_type: $t}]}' | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
+
+  build:
+    name: iOS ${{ matrix.ios }} ${{ matrix.build_type }}
+    needs: types
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.types.outputs.legs) }}
+    env:
+      # Selects the Xcode, and with it the compiler and the SDK, as in
+      # apple-clang.yml.
+      DEVELOPER_DIR: /Applications/${{ matrix.xcode }}.app/Contents/Developer
+      TRIPLET: arm64-ios-simulator-xcode
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+      VCPKG_CACHE_KEY: vcpkg-ios-${{ matrix.xcode }}-${{ matrix.deployment_target }}-
+      # The overlay triplet's toolchain is read again by the vcpkg CMake
+      # integration, so the deployment target has to outlive the install step.
+      VCPKG_IOS_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Locate the overlay triplets
+        id: overlay
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+
+      # The newest runtime of the leg's release, on the newest iPhone that
+      # runtime supports, booted before the build so it is ready by the tests.
+      - name: Boot the iOS ${{ matrix.ios }} simulator
+        env:
+          IOS: ${{ matrix.ios }}
+        run: |
+          set -euo pipefail
+          runtime=$(xcrun simctl list --json runtimes | jq -c --arg major "$IOS" '
+            [.runtimes[]
+              | select(.isAvailable and (.name | startswith("iOS ")) and (.version | split(".")[0]) == $major)]
+            | sort_by(.version | split(".") | map(tonumber)) | last // empty')
+          if [ -z "$runtime" ]; then
+            echo "::error::no iOS $IOS simulator runtime on this image"
+            xcrun simctl list runtimes
+            exit 1
+          fi
+          runtime_id=$(jq -r .identifier <<< "$runtime")
+          device_type=$(jq -r '[.supportedDeviceTypes[] | select(.productFamily == "iPhone")] | last | .identifier // empty' <<< "$runtime")
+          if [ -z "$device_type" ]; then
+            echo "::error::the $runtime_id runtime supports no iPhone"
+            exit 1
+          fi
+          udid=$(xcrun simctl create cpp-ci "$device_type" "$runtime_id")
+          xcrun simctl bootstatus "$udid" -b
+          echo "IOS_SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+          echo "::notice::iOS $(jq -r .version <<< "$runtime") on $device_type, $udid"
+
+      - name: Report toolchain versions
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+          clang++ --version
+          cmake --version
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
+      - name: Check out vcpkg at the pinned commit
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+
+      - name: Install the test dependencies
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+        with:
+          triplet: ${{ env.TRIPLET }}
+          features: ${{ inputs.vcpkg_features }}
+          overlay_triplets: ${{ steps.overlay.outputs.triplets }}
+
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      # The chainloaded toolchain names the SDK, the architecture and the
+      # deployment target, and sets CMAKE_CROSSCOMPILING_EMULATOR, so ctest
+      # runs every test inside the booted simulator. The empty-array form of
+      # cmake_args is the one apple-clang.yml gives for macOS's bash 3.2.
+      - name: Configure
+        shell: bash
+        env:
+          BUILD_TYPE: ${{ matrix.build_type }}
+          CXX_FLAGS: ${{ inputs.cxx_flags }}
+          OVERLAY_TRIPLETS: ${{ steps.overlay.outputs.triplets }}
+          EXTRA_CMAKE: ${{ inputs.cmake_args }}
+          SCAN_FOR_MODULES: ${{ inputs.scan_for_modules && 'ON' || 'OFF' }}
+          DEBUG_FLAGS: ${{ inputs.debug_flags }}
+          FEATURES: ${{ inputs.vcpkg_features }}
+        run: |
+          set -euo pipefail
+          read -ra extra <<< "$EXTRA_CMAKE"
+          features_arg=""
+          if [ -n "$FEATURES" ]; then
+            features_arg="-DVCPKG_MANIFEST_FEATURES=$(printf '%s' "$FEATURES" | tr -d '[:space:]' | tr ',' ';' | tr -s ';' | sed 's/^;//; s/;$//')"
+          fi
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$OVERLAY_TRIPLETS/../toolchains/ios-simulator.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            ${features_arg:+"$features_arg"} \
+            -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
+            -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
+            -DCMAKE_CXX_SCAN_FOR_MODULES="$SCAN_FOR_MODULES" \
+            ${DEBUG_FLAGS:+"-DCMAKE_CXX_FLAGS_DEBUG=$DEBUG_FLAGS"} \
+            ${extra[@]+"${extra[@]}"}
+
+      - name: Build
+        run: cmake --build build -v
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  # One check name that does not move, as in gcc.yml.
+  all:
+    name: all
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless every leg succeeded
+        env:
+          RESULT: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+          echo "legs: $RESULT"
+          test "$RESULT" = success
