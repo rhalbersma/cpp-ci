@@ -1,0 +1,33 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Header layering
+description: >
+  Check that a library's headers are layered, implementation pushed down and
+  interface pulled up, from the #include lines alone: the shared detail folder
+  includes no public header, the folders form no cycle, no family includes
+  another, every public header is a leaf that only umbrellas and extensions
+  include, and every folder's own detail/ is private to it. The check lives in
+  layering.py beside this action, because a reusable workflow checks out the
+  caller rather than this repository, and a developer runs the same script
+  before pushing. The caller's configuration says which kind each folder is.
+  Expects Python 3.11 or later, for tomllib, as the Ubuntu runner images carry.
+
+inputs:
+  config:
+    description: >
+      The TOML file, relative to the caller's checkout, naming the root folder
+      and the kind of each folder under it. layering.py's docstring gives the
+      keys.
+    required: false
+    default: tools/layering.toml
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+      run: python3 -I "$GITHUB_ACTION_PATH/layering.py" "$CONFIG"
