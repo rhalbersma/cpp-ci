@@ -113,7 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f49fd56d08ae7a406244888b5affef7e2e17adfe
 
       # From the image's own archive, so no source is added. A package counts
       # as available only where its own name heads apt-cache policy with an
@@ -167,7 +167,7 @@ jobs:
       # the tests share one compiler, one libstdc++ and one emulator.
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@f49fd56d08ae7a406244888b5affef7e2e17adfe
 
       - name: Report toolchain versions
         run: |
@@ -186,10 +186,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@f49fd56d08ae7a406244888b5affef7e2e17adfe
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@89f1cd196c6b0f1cdf950b956f5b8d6d4dbec317
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@f49fd56d08ae7a406244888b5affef7e2e17adfe
         with:
           triplet: ${{ env.TRIPLET }}
           features: ${{ inputs.vcpkg_features }}
