@@ -1,0 +1,75 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Test-suite pins
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+# Weekly, the standard library test suites' tags in toolchains.json move to the
+# newest release of their series, as one pull request: Dependabot bumps actions
+# and requirements files, not these. A consumer takes the move with its next
+# repin, where its mapping's hashes and its own table of outcomes turn each
+# changed upstream test into a failing check to review.
+on:
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BRANCH: test-suite-pins
+      # A pull request the default token opens starts no workflow, so its checks
+      # never report; a token of the maintainer's, stored under this name, makes
+      # the pull request run CI like any other.
+      GH_TOKEN: ${{ secrets.TEST_SUITE_PINS_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Move each pin to the newest release of its series
+        id: bump
+        run: |
+          set -euo pipefail
+          python3 -I .github/scripts/bump_test_suites.py --summary "$RUNNER_TEMP/moves.md"
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the pull request
+        if: steps.bump.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -am "Move the standard library test suites' pins to the newest release of each series"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
+          {
+            echo "The standard library test suites' tags in \`.github/actions/toolchain/toolchains.json\`, each moved to the newest release of its series:"
+            echo
+            cat "$RUNNER_TEMP/moves.md"
+            echo
+            echo "A consumer takes these with its next repin. There its mapping's hashes and its table of outcomes turn each changed upstream test into a failing check to review."
+            echo
+            echo "Opened by \`.github/workflows/test-suite-pins.yml\`."
+          } > "$RUNNER_TEMP/body.md"
+          if gh pr view "$BRANCH" --json state --jq .state 2>/dev/null | grep -qx OPEN; then
+            gh pr edit "$BRANCH" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --head "$BRANCH" --base main --title "Move the standard library test suites' pins to the newest release of each series" --body-file "$RUNNER_TEMP/body.md"
+          fi
