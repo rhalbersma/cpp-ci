@@ -143,6 +143,9 @@ jobs:
       - name: Run the adapter's unit tests
         run: python3 -I cmake/test_std_test_suite.py -v
 
+      - name: Run the pin bump's unit tests
+        run: python3 -I .github/scripts/test_bump_test_suites.py -v
+
   # The layering action's five rules, and its configuration checks, on a small
   # tree laid out as a library would be. The callers run it on their own trees.
   layering:
