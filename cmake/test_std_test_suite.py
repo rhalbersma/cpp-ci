@@ -269,6 +269,24 @@ class Registration(unittest.TestCase):
             self.assertIn(f'set(STD_TEST_SUITE_INCLUDE_DIRS_libcxx "{(out / "support").as_posix()}" "{(tree / "libcxx/test/support").as_posix()}")', cmake)
             self.assertIn('"name": "charconv_test_helpers.h"', (out / "manifest.json").read_text())
 
+    def test_a_named_run(self):
+        # A second subject's run of the same suite names its targets, include directories and manifest apart.
+        with tempfile.TemporaryDirectory() as root:
+            tree, out, argv = self.support_tree(pathlib.Path(root), self.HELPER, self.TAKE + 'support = [{ path = "libcxx/test/support/charconv_test_helpers.h" }]\n')
+            self.assertEqual(sts.main(argv + ["--name", "libcxx-fixed-set"]), 0)
+            cmake = (out / "tests.cmake").read_text()
+            self.assertIn("std_test_suite_add(libcxx-fixed-set.utilities.charconv.integral SUITE libcxx-fixed-set ", cmake)
+            self.assertIn("set(STD_TEST_SUITE_INCLUDE_DIRS_libcxx_fixed_set ", cmake)
+            manifest = (out / "manifest.json").read_text()
+            self.assertIn('"name": "libcxx-fixed-set"', manifest)
+            self.assertIn('"suite": "libcxx"', manifest)
+
+    def test_a_name_is_lower_case_words(self):
+        with tempfile.TemporaryDirectory() as root:
+            _, _, argv = self.support_tree(pathlib.Path(root), self.HELPER, self.TAKE)
+            with self.assertRaises(SystemExit):
+                sts.main(argv + ["--name", "libcxx.fixed set"])
+
     def test_support_header_exception(self):
         # A per-line exception may name a support header as well as a test.
         digest = sts.sha256(self.HELPER.encode())

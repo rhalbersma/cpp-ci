@@ -14,16 +14,21 @@
 #   std_test_suite(<suite>
 #                  MAPPING <file>...
 #                  LINK_LIBRARIES <target>...
+#                  [NAME <name>]
 #                  [RUNG <stable|qualification|development>]
 #                  [TAG <tag>])
 #
-# <suite> is libcxx, libstdcxx or msvc-stl. Each runnable test becomes its own
-# executable and CTest test, labelled std-test-suite and <suite>; a compile
+# <suite> is libcxx, libstdcxx or msvc-stl. <name>, by default <suite>, names
+# this run's targets, tests, label and build directory, so one suite can run
+# against several subjects, each with a mapping of its own: libc++'s set tests
+# against two set types, say, as NAME libcxx and NAME libcxx-fixed-set. Each
+# runnable test becomes its own executable and CTest test, labelled
+# std-test-suite and <name>; a compile
 # test becomes an object library. A test the suite or the mapping expects to
 # fail at run must exit non-zero or crash; one expected to fail at compile is
 # left out of all and registered as a build of its target that must fail, so
 # an expected failure that starts passing turns red rather than staying
-# excused. The target std-test-suite-<suite> builds every test that is meant
+# excused. The target std-test-suite-<name> builds every test that is meant
 # to build.
 #
 # Needs git and a Python of 3.11 or later, for tomllib. A consumer reaches this
@@ -66,12 +71,15 @@ function(std_test_suite_add name)
 endfunction()
 
 function(std_test_suite suite)
-        cmake_parse_arguments(PARSE_ARGV 1 arg "" "RUNG;TAG" "MAPPING;LINK_LIBRARIES")
+        cmake_parse_arguments(PARSE_ARGV 1 arg "" "NAME;RUNG;TAG" "MAPPING;LINK_LIBRARIES")
         if(NOT arg_MAPPING)
                 message(FATAL_ERROR "std_test_suite(${suite}): MAPPING names no file")
         endif()
         if(NOT arg_RUNG)
                 set(arg_RUNG stable)
+        endif()
+        if(NOT arg_NAME)
+                set(arg_NAME ${suite})
         endif()
         find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
 
@@ -144,11 +152,11 @@ function(std_test_suite suite)
                 list(APPEND mappings --mapping "${file}")
         endforeach()
 
-        set(binary_dir "${CMAKE_CURRENT_BINARY_DIR}/std-test-suite/${suite}")
+        set(binary_dir "${CMAKE_CURRENT_BINARY_DIR}/std-test-suite/${arg_NAME}")
         execute_process(
                 COMMAND ${Python3_EXECUTABLE} -I "${STD_TEST_SUITE_SCRIPT}"
-                        --suite ${suite} ${mappings}
-                        --tree "${CMAKE_BINARY_DIR}/_deps/std-test-suite-${suite}"
+                        --suite ${suite} --name ${arg_NAME} ${mappings}
+                        --tree "${CMAKE_BINARY_DIR}/_deps/std-test-suite-${arg_NAME}"
                         --binary-dir "${binary_dir}"
                         --rung ${arg_RUNG}
                         --compiler ${compiler} --version ${CMAKE_CXX_COMPILER_VERSION}
@@ -162,8 +170,8 @@ function(std_test_suite suite)
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${arg_MAPPING} "${STD_TEST_SUITE_SCRIPT}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../.github/actions/toolchain/toolchains.json")
 
         set(STD_TEST_SUITE_LINK_LIBRARIES ${arg_LINK_LIBRARIES})
-        if(NOT TARGET std-test-suite-${suite})
-                add_custom_target(std-test-suite-${suite})
+        if(NOT TARGET std-test-suite-${arg_NAME})
+                add_custom_target(std-test-suite-${arg_NAME})
         endif()
         include("${binary_dir}/tests.cmake")
 endfunction()
