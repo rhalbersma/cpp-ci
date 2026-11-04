@@ -106,7 +106,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f49fd56d08ae7a406244888b5affef7e2e17adfe
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f2c8315bf8c606db37fca1c261d54609066caf9c
         with:
           mode: matrix
           toolchain: clang
@@ -135,26 +135,26 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f49fd56d08ae7a406244888b5affef7e2e17adfe
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f2c8315bf8c606db37fca1c261d54609066caf9c
 
       # Each Clang paired with a matching libstdc++. Not a compiler here: only
       # the standard library is wanted, so the binaries are left unlinked.
       - name: Install the paired libstdc++
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@f49fd56d08ae7a406244888b5affef7e2e17adfe
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@f2c8315bf8c606db37fca1c261d54609066caf9c
         with:
           version: ${{ matrix.gcc_version }}
           trunk: ${{ matrix.gcc_trunk }}
           symlink_binaries: "false"
 
       - name: Install Clang
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@f49fd56d08ae7a406244888b5affef7e2e17adfe
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@f2c8315bf8c606db37fca1c261d54609066caf9c
         with:
           version: ${{ matrix.version }}
           llvm_suffix: ${{ matrix.llvm_suffix }}
 
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@f49fd56d08ae7a406244888b5affef7e2e17adfe
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@f2c8315bf8c606db37fca1c261d54609066caf9c
 
       - name: Name the toolchain and its cache
         env:
@@ -184,10 +184,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@f49fd56d08ae7a406244888b5affef7e2e17adfe
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@f2c8315bf8c606db37fca1c261d54609066caf9c
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@f49fd56d08ae7a406244888b5affef7e2e17adfe
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@f2c8315bf8c606db37fca1c261d54609066caf9c
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}
