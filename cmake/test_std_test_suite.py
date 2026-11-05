@@ -233,6 +233,15 @@ class Mapping(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("written against sha256", errors[0])
 
+    def test_stale_hash_lenient(self):
+        # Against a trunk, an exception whose line still reads applies, and its drift is still reported.
+        mapping = self.mapping(assertion=[{"file": "f.cpp", "sha256": "0" * 64, "line": "int main() {", "drop": True, "departure": "x"}])
+        errors = []
+        text, applied, _ = sts.rewrite(self.TEXT, "f.cpp", sts.sha256(self.TEXT.encode()), mapping, errors, lenient=True)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(len(applied), 1)
+        self.assertIn("std-test-suite: x", text)
+
     def test_vanished_line(self):
         digest = sts.sha256(self.TEXT.encode())
         mapping = self.mapping(assertion=[{"file": "f.cpp", "sha256": digest, "line": "assert(v.data());", "drop": True, "departure": "no data()"}])
@@ -358,6 +367,23 @@ class Registration(unittest.TestCase):
             manifest = (out / "manifest.json").read_text()
             self.assertIn('"name": "libcxx-fixed-set"', manifest)
             self.assertIn('"suite": "libcxx"', manifest)
+
+    def test_warn_stale(self):
+        # A trunk run: a stale expected failure fails configuration, unless --warn-stale reports it, applies it and runs.
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            tree, out = root / "tree", root / "build" / "libstdcxx"
+            (tree / "libstdc++-v3/testsuite/23_containers/set").mkdir(parents=True)
+            (tree / "libstdc++-v3/testsuite/23_containers/set/merge.cc").write_text("std::set<int> s;\nint main() { s.merge(s); }\n")
+            mapping = root / "m.toml"
+            mapping.write_text('[libstdcxx]\ntake = [{ path = "libstdc++-v3/testsuite/23_containers/set" }]\nrewrite = [{ from = "std::set<int>", to = "xstd::bit_set" }]\n'
+                               + f'[[libstdcxx.expect]]\nfile = "libstdc++-v3/testsuite/23_containers/set/merge.cc"\nsha256 = "{"0" * 64}"\nfails = "compile"\nparagraph = "no nodes"\n')
+            argv = ["--suite", "libstdcxx", "--mapping", str(mapping), "--tree", str(tree), "--binary-dir", str(out), "--tag", "a-trunk-commit", "--offline"]
+            argv += ["--compiler", "gcc", "--version", "17.0.0", "--stdlib", "libstdc++", "--std", "23", "--target", "x86_64-linux-gnu"]
+            self.assertEqual(sts.main(argv), 1)
+            self.assertEqual(sts.main(argv + ["--warn-stale"]), 0)
+            self.assertIn("EXPECT compile", (out / "tests.cmake").read_text())
+            self.assertIn("its expected failure was written against sha256", (out / "manifest.json").read_text())
 
     def test_a_name_is_lower_case_words(self):
         with tempfile.TemporaryDirectory() as root:

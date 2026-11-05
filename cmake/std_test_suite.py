@@ -27,7 +27,11 @@ A mapping entry that has gone stale is an error, never a silent pass: an
 expected failure or an exception naming a file the tree no longer has, a file
 whose contents no longer hash to what the entry was written against, or a line
 the file no longer carries. An upstream edit therefore brings its verdict back
-for review instead of carrying the old one forward.
+for review instead of carrying the old one forward. A run against a trunk the
+mapping was not written for passes --warn-stale instead: each stale entry is
+reported and listed in the manifest, an entry whose file merely hashes
+differently still applies wherever its line still reads, and the tests run, so
+the run shows what the next release changes and breaks.
 
 Every file under a taken directory lands in manifest.json with its hash and
 what became of it, so a consumer can hold a classification table to the tree.
@@ -839,7 +843,7 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def rewrite(text: str, path: str, digest: str, mapping: Mapping, errors: list[str]) -> tuple[str, list[str], bool]:
+def rewrite(text: str, path: str, digest: str, mapping: Mapping, errors: list[str], lenient: bool = False) -> tuple[str, list[str], bool]:
     """The build-tree copy of one test, its exceptions applied, and whether any spelling rewrite changed it.
 
     Exceptions apply to the original lines, then the spelling rewrites to the
@@ -852,7 +856,8 @@ def rewrite(text: str, path: str, digest: str, mapping: Mapping, errors: list[st
             continue
         if entry.get("sha256") != digest:
             errors.append(f"{path}: an exception was written against sha256 {entry.get('sha256')}, the file is now {digest}")
-            continue
+            if not lenient:
+                continue
         wanted = entry["line"].strip()
         hits = [i for i, line in enumerate(lines) if line.strip() == wanted]
         if not hits:
@@ -878,7 +883,7 @@ def rewrite(text: str, path: str, digest: str, mapping: Mapping, errors: list[st
 # The run
 # ---------------------------------------------------------------------------
 
-def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping, config: Config, errors: list[str]) -> list[Test]:
+def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping, config: Config, errors: list[str], lenient: bool = False) -> list[Test]:
     tests: list[Test] = []
     expected = {e["file"]: e for e in mapping.expect}
     seen: set[str] = set()
@@ -910,8 +915,11 @@ def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping,
                 test.expect, test.paragraph = ("run" if kind == "run" else "compile"), f"the suite's own {xfail}"
             if path in expected:
                 e = expected[path]
-                if e.get("sha256") != digest:
+                stale = e.get("sha256") != digest
+                if stale:
                     errors.append(f"{path}: its expected failure was written against sha256 {e.get('sha256')}, the file is now {digest}")
+                if stale and not lenient:
+                    pass
                 elif kind == "skip":
                     errors.append(f"{path}: expected to fail, but the suite's markers skip it ({reason})")
                 elif e["fails"] == "run" and kind != "run":
@@ -998,6 +1006,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-exceptions", action="store_true")
     parser.add_argument("--no-rtti", action="store_true")
     parser.add_argument("--offline", action="store_true", help="use the tree as it is, without fetching")
+    parser.add_argument("--warn-stale", action="store_true", help="report stale mapping entries and run anyway, for a trunk the mapping was not written for")
     args = parser.parse_args(argv)
     name = args.name or args.suite
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
@@ -1014,7 +1023,7 @@ def main(argv: list[str] | None = None) -> int:
         fetch(suite, tag, [t["path"] for t in mapping.take], args.tree)
 
     errors: list[str] = []
-    tests = collect(args.suite, suite, args.tree, mapping, config, errors)
+    tests = collect(args.suite, suite, args.tree, mapping, config, errors, args.warn_stale)
 
     out = args.binary_dir
     support = rewrite_support(suite, args.tree, out, mapping, errors)
@@ -1024,7 +1033,7 @@ def main(argv: list[str] | None = None) -> int:
         if test.kind == "skip":
             continue
         text = (args.tree / test.path).read_bytes().decode("utf-8", errors="replace")
-        rewritten, test.exceptions, touched = rewrite(text, test.path, test.sha256, mapping, errors)
+        rewritten, test.exceptions, touched = rewrite(text, test.path, test.sha256, mapping, errors, args.warn_stale)
         # A test no rewrite reaches still names only the standard library's types, and would pass on its account.
         if not touched and not includes_any(text, (s["name"] for s in support)):
             if test.expect and not test.paragraph.startswith("the suite's own"):
@@ -1052,10 +1061,13 @@ def main(argv: list[str] | None = None) -> int:
             + (" OPTIONS " + " ".join(cmake_quote(o) for o in test.options) if test.options else "")
             + ")"
         )
-    if errors:
+    stale = sorted(set(errors)) if args.warn_stale else []
+    if errors and not args.warn_stale:
         for error in errors:
             print(f"std_test_suite: {error}", file=sys.stderr)
         return 1
+    for warning in stale:
+        print(f"std_test_suite: warning: {warning}", file=sys.stderr)
 
     # The rewritten support headers come first, so a test's include finds the copy before the original.
     roots = ([out / "support"] if support else []) + [args.tree / s for s in suite.support]
@@ -1077,6 +1089,7 @@ def main(argv: list[str] | None = None) -> int:
         "repository": suite.repository,
         "tag": tag,
         "support": [{k: v for k, v in s.items() if v} for s in support],
+        **({"stale": stale} if stale else {}),
         "tests": [{k: v for k, v in dataclasses.asdict(t).items() if v or k in ("path", "sha256", "kind")} for t in tests],
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -1085,7 +1098,8 @@ def main(argv: list[str] | None = None) -> int:
         key = f"expected {test.expect} failure" if test.expect else test.kind
         counts[key] = counts.get(key, 0) + 1
     rewritten_headers = f", {len(support)} rewritten support header{'s' if len(support) != 1 else ''}" if support else ""
-    print(f"std_test_suite: {title} at {tag}: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())) + rewritten_headers)
+    stale_entries = f", {len(stale)} stale mapping entr{'ies' if len(stale) != 1 else 'y'}" if stale else ""
+    print(f"std_test_suite: {title} at {tag}: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())) + rewritten_headers + stale_entries)
     return 0
 
 

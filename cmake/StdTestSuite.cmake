@@ -16,7 +16,8 @@
 #                  LINK_LIBRARIES <target>...
 #                  [NAME <name>]
 #                  [RUNG <stable|qualification|development>]
-#                  [TAG <tag>])
+#                  [TAG <tag>]
+#                  [WARN_STALE])
 #
 # <suite> is libcxx, libstdcxx or msvc-stl. <name>, by default <suite>, names
 # this run's targets, tests, label and build directory, so one suite can run
@@ -33,6 +34,12 @@
 # Clang's -verify, and libstdc++'s dg-error lines are matched against GCC's
 # output. The target std-test-suite-<name> builds every test that is meant
 # to build.
+#
+# WARN_STALE is for a run against a trunk the mapping was not written for: a
+# stale mapping entry is reported rather than failing configuration, an entry
+# whose file merely hashes differently still applies where its line still
+# reads, and the manifest lists every stale entry. The tests then show what the
+# next release changes and breaks.
 #
 # Needs git and a Python of 3.11 or later, for tomllib. A consumer reaches this
 # module through FetchContent of this repository at the commit its workflows
@@ -79,7 +86,7 @@ function(std_test_suite_add name)
 endfunction()
 
 function(std_test_suite suite)
-        cmake_parse_arguments(PARSE_ARGV 1 arg "" "NAME;RUNG;TAG" "MAPPING;LINK_LIBRARIES")
+        cmake_parse_arguments(PARSE_ARGV 1 arg "WARN_STALE" "NAME;RUNG;TAG" "MAPPING;LINK_LIBRARIES")
         if(NOT arg_MAPPING)
                 message(FATAL_ERROR "std_test_suite(${suite}): MAPPING names no file")
         endif()
@@ -153,6 +160,9 @@ function(std_test_suite suite)
         endif()
         if(arg_TAG)
                 list(APPEND extra --tag ${arg_TAG})
+        endif()
+        if(arg_WARN_STALE)
+                list(APPEND extra --warn-stale)
         endif()
         set(mappings)
         foreach(file IN LISTS arg_MAPPING)
