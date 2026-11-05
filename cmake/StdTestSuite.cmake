@@ -28,7 +28,10 @@
 # fail at run must exit non-zero or crash; one expected to fail at compile is
 # left out of all and registered as a build of its target that must fail, so
 # an expected failure that starts passing turns red rather than staying
-# excused. The target std-test-suite-<name> builds every test that is meant
+# excused. A test of diagnostics is the same build, which must also report
+# every error the suite's markers name: libc++'s .verify.cpp compiles under
+# Clang's -verify, and libstdc++'s dg-error lines are matched against GCC's
+# output. The target std-test-suite-<name> builds every test that is meant
 # to build.
 #
 # Needs git and a Python of 3.11 or later, for tomllib. A consumer reaches this
@@ -41,9 +44,9 @@ set(STD_TEST_SUITE_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/std_test_suite.py")
 set(STD_TEST_SUITE_EXPECT_FAILURE "${CMAKE_CURRENT_LIST_DIR}/std_test_suite_expect_failure.cmake")
 
 function(std_test_suite_add name)
-        cmake_parse_arguments(PARSE_ARGV 1 arg "" "SUITE;KIND;SOURCE;EXPECT" "INCLUDE_DIRS;OPTIONS")
+        cmake_parse_arguments(PARSE_ARGV 1 arg "" "SUITE;KIND;SOURCE;EXPECT;DIAGNOSTICS" "INCLUDE_DIRS;OPTIONS")
         string(REPLACE "-" "_" suite_var "${arg_SUITE}")
-        if(arg_KIND STREQUAL "compile")
+        if(arg_KIND STREQUAL "compile" OR arg_KIND STREQUAL "diagnose")
                 add_library(${name} OBJECT "${arg_SOURCE}")
         else()
                 add_executable(${name} "${arg_SOURCE}")
@@ -52,10 +55,15 @@ function(std_test_suite_add name)
         target_link_libraries(${name} PRIVATE ${STD_TEST_SUITE_LINK_LIBRARIES})
         target_compile_options(${name} PRIVATE ${arg_OPTIONS})
         set(labels std-test-suite ${arg_SUITE})
-        if(NOT arg_EXPECT STREQUAL "compile")
+        if(NOT arg_EXPECT STREQUAL "compile" AND NOT arg_KIND STREQUAL "diagnose")
                 add_dependencies(std-test-suite-${arg_SUITE} ${name})
         endif()
-        if(arg_EXPECT STREQUAL "compile")
+        if(arg_KIND STREQUAL "diagnose")
+                set_target_properties(${name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+                add_test(NAME ${name} COMMAND ${Python3_EXECUTABLE} -I ${STD_TEST_SUITE_SCRIPT} --check-diagnostics ${arg_DIAGNOSTICS}
+                         -- ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name} --config $<CONFIG>)
+                set_tests_properties(${name} PROPERTIES LABELS "${labels}" RESOURCE_LOCK std-test-suite-build)
+        elseif(arg_EXPECT STREQUAL "compile")
                 set_target_properties(${name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
                 add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name} --config $<CONFIG>)
                 # Builds of a shared tree do not run side by side.
