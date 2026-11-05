@@ -295,7 +295,7 @@ def libcxx_classify(path: str, text: str, config: Config) -> tuple[str, str, lis
                 return "skip", f"ADDITIONAL_COMPILE_FLAGS with a lit substitution: {value}", [], ""
             options += shlex.split(value)
     if name.endswith(".verify.cpp"):
-        # lit's %{verify}, less -fsyntax-only: the build still writes the object file it names.
+        # lit's %{verify} less -fsyntax-only, so a test expecting only warnings keeps its object between builds.
         options = [*LIBCXX_VERIFY, *options]
     if name.endswith(".compile.fail.cpp"):
         xfail = xfail or ".compile.fail.cpp"
