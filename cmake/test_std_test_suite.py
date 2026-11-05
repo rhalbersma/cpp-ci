@@ -52,6 +52,19 @@ class Libcxx(unittest.TestCase):
         self.assertEqual(self.classify("a.verify.cpp", "")[0], "skip")
         self.assertEqual(self.classify("a.fmt", "")[0], "skip")
 
+    def test_verify_under_clang(self):
+        # nodiscard_extensions.verify.cpp and its kind: Clang checks every expected-warning, GCC cannot.
+        body = "// UNSUPPORTED: c++03\n// ADDITIONAL_COMPILE_FLAGS: -Wno-deprecated\n"
+        kind, _, options, xfail = self.classify("a.verify.cpp", body, CLANG)
+        self.assertEqual((kind, xfail), ("compile", ""))
+        self.assertEqual(options, [*sts.LIBCXX_VERIFY, "-Wno-deprecated"])
+        self.assertEqual(self.classify("a.verify.cpp", body)[:2], ("skip", "a test of Clang's diagnostics, which only Clang verifies"))
+
+    def test_compile_fail(self):
+        # compare_copy_constructible.compile.fail.cpp: the suite's own expected compile failure, on any compiler.
+        self.assertEqual(self.classify("a.compile.fail.cpp", "")[::3], ("compile", ".compile.fail.cpp"))
+        self.assertEqual(self.classify("a.compile.fail.cpp", "// XFAIL: gcc\n")[3], "XFAIL: gcc")
+
     def test_unsupported_dialects(self):
         body = "// UNSUPPORTED: c++03, c++11, c++14, c++17, c++20\n"
         self.assertEqual(self.classify("a.pass.cpp", body)[0], "run")
@@ -121,6 +134,48 @@ class Libstdcxx(unittest.TestCase):
         self.assertEqual(self.classify("// { dg-require-effective-target exceptions_enabled }\n")[0], "run")
         self.assertEqual(self.classify("// { dg-require-normal-mode \"\" }\n")[0], "skip")
         self.assertEqual(self.classify('// { dg-error "no match" }\n')[0], "skip")
+
+    # operators/1_neg.cc, cut down: two dg-error lines on the comparisons they reject.
+    NEG = '// { dg-do compile }\n#include <set>\nvoid f() {\n  a != b; // { dg-error "no match" }\n  a == b; // { dg-error "no match" }\n}\n'
+
+    def test_diagnose(self):
+        self.assertEqual(self.classify(self.NEG)[0], "diagnose")
+        self.assertEqual(sts.libstdcxx_diagnostics(self.NEG, GCC), [{"line": 4, "pattern": "no match"}, {"line": 5, "pattern": "no match"}])
+        clang = sts.Config("clang", "22.1.8", "libstdc++", 23, "x86_64-pc-linux-gnu")
+        self.assertEqual(self.classify(self.NEG, clang)[:2], ("skip", "a test of GCC's diagnostics, which only GCC reports"))
+        self.assertEqual(self.classify('// { dg-excess-errors "" }\n')[0], "skip")
+
+    def test_diagnostic_lines(self):
+        body = '\n'.join([
+            "// { dg-do compile }",
+            'x; // { dg-error "here" }',
+            '// { dg-error "two" "" { target *-*-* } .-1 }',
+            '// { dg-error "in a header" "" { target *-*-* } 0 }',
+            '// { dg-error "absolute" "" { target *-*-* } 9 }',
+            '// { dg-error "elsewhere" "" { target c++17_down } }',
+            '// { dg-error "known" "" { xfail *-*-* } }',
+        ])
+        self.assertEqual(sts.libstdcxx_diagnostics(body, GCC), [
+            {"line": 2, "pattern": "here"}, {"line": 2, "pattern": "two"}, {"line": 0, "pattern": "in a header"}, {"line": 9, "pattern": "absolute"},
+        ])
+        # Only directives whose selectors drop them in this dialect: the test compiles cleanly, so it is a compile.
+        self.assertEqual(self.classify('// { dg-do compile }\n// { dg-error "x" "" { target c++17_down } }\n')[0], "compile")
+
+    def test_check_diagnostics(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = pathlib.Path(root) / "1_neg.cc"
+            source.write_text("")
+            output = "\n".join([
+                f"{source}: In function 'void f()':",
+                f"{source}:4:7: error: no match for 'operator!=' (operand types are 'it' and 'it')",
+                f"{root}/include/set.hpp:12:3: note: candidate: 'operator=='",
+            ])
+            expected = sts.libstdcxx_diagnostics(self.NEG, GCC)
+            self.assertEqual(sts.check_diagnostics(output, str(source), expected), ["no diagnostic at line 5 matches 'no match'"])
+            self.assertEqual(sts.check_diagnostics(output, str(source), [{"line": 0, "pattern": "candidate"}]), [])
+            self.assertEqual(sts.check_diagnostics(output, str(source), [{"line": 12, "pattern": "candidate"}]), ["no diagnostic at line 12 matches 'candidate'"])
+            # A pattern Python cannot read is matched as text.
+            self.assertEqual(sts.check_diagnostics(output, str(source), [{"line": 4, "pattern": "operator!=' (operand"}]), [])
 
     def test_other_standard_libraries(self):
         self.assertEqual(self.classify("", MSVC)[0], "skip")
@@ -235,6 +290,29 @@ class Registration(unittest.TestCase):
             self.assertNotIn("std_test_suite_add(", (out / "tests.cmake").read_text())
             self.assertIn('"kind": "skip"', (out / "manifest.json").read_text())
 
+    def test_a_diagnostics_test(self):
+        # 23781_neg.cc: the rewritten copy must fail with the errors its dg-error lines name, unless the mapping says otherwise.
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            tree, out = root / "tree", root / "build" / "libstdcxx"
+            (tree / "libstdc++-v3/testsuite/23_containers/set").mkdir(parents=True)
+            test = tree / "libstdc++-v3/testsuite/23_containers/set/23781_neg.cc"
+            test.write_text('// { dg-do compile }\n#include <set>\nstd::set<int>::iterator it = NULL; // { dg-error "conversion" }\n')
+            mapping = root / "m.toml"
+            mapping.write_text('[libstdcxx]\ntake = [{ path = "libstdc++-v3/testsuite/23_containers/set" }]\nrewrite = [{ from = "std::set<int>", to = "xstd::bit_set" }]\n')
+            argv = ["--suite", "libstdcxx", "--mapping", str(mapping), "--tree", str(tree), "--binary-dir", str(out), "--tag", "releases/gcc-15.2.0", "--offline"]
+            argv += ["--compiler", "gcc", "--version", "15.2.0", "--stdlib", "libstdc++", "--std", "23", "--target", "x86_64-linux-gnu"]
+            self.assertEqual(sts.main(argv), 0)
+            self.assertIn("KIND diagnose", (out / "tests.cmake").read_text())
+            self.assertIn("DIAGNOSTICS", (out / "tests.cmake").read_text())
+            written = (out / "diagnostics" / "libstdcxx.23_containers.set.23781_neg.json").read_text()
+            self.assertIn('"line": 3', written)
+            digest = sts.sha256(test.read_bytes())
+            mapping.write_text(mapping.read_text() + f'[[libstdcxx.expect]]\nfile = "libstdc++-v3/testsuite/23_containers/set/23781_neg.cc"\nsha256 = "{digest}"\nfails = "compile"\nparagraph = "not with these errors"\n')
+            self.assertEqual(sts.main(argv), 0)
+            self.assertIn("KIND compile", (out / "tests.cmake").read_text())
+            self.assertIn("EXPECT compile", (out / "tests.cmake").read_text())
+
     def support_tree(self, root, helper, mapping_text):
         # libc++'s charconv test calls std::to_chars only from its support header, never from the test.
         tree, out = root / "tree", root / "build" / "libcxx"
@@ -268,6 +346,24 @@ class Registration(unittest.TestCase):
             # The copy comes before the original, so the test's include finds it first.
             self.assertIn(f'set(STD_TEST_SUITE_INCLUDE_DIRS_libcxx "{(out / "support").as_posix()}" "{(tree / "libcxx/test/support").as_posix()}")', cmake)
             self.assertIn('"name": "charconv_test_helpers.h"', (out / "manifest.json").read_text())
+
+    def test_a_named_run(self):
+        # A second subject's run of the same suite names its targets, include directories and manifest apart.
+        with tempfile.TemporaryDirectory() as root:
+            tree, out, argv = self.support_tree(pathlib.Path(root), self.HELPER, self.TAKE + 'support = [{ path = "libcxx/test/support/charconv_test_helpers.h" }]\n')
+            self.assertEqual(sts.main(argv + ["--name", "libcxx-fixed-set"]), 0)
+            cmake = (out / "tests.cmake").read_text()
+            self.assertIn("std_test_suite_add(libcxx-fixed-set.utilities.charconv.integral SUITE libcxx-fixed-set ", cmake)
+            self.assertIn("set(STD_TEST_SUITE_INCLUDE_DIRS_libcxx_fixed_set ", cmake)
+            manifest = (out / "manifest.json").read_text()
+            self.assertIn('"name": "libcxx-fixed-set"', manifest)
+            self.assertIn('"suite": "libcxx"', manifest)
+
+    def test_a_name_is_lower_case_words(self):
+        with tempfile.TemporaryDirectory() as root:
+            _, _, argv = self.support_tree(pathlib.Path(root), self.HELPER, self.TAKE)
+            with self.assertRaises(SystemExit):
+                sts.main(argv + ["--name", "libcxx.fixed set"])
 
     def test_support_header_exception(self):
         # A per-line exception may name a support header as well as a test.

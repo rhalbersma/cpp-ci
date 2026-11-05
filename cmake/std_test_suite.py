@@ -97,9 +97,10 @@ class Test:
     """One file under a taken directory, and what became of it.
 
     kind is run (build and run), build (build and link, never run), compile
-    (an object file, no main required) or skip. A skipped file carries the
-    reason; one the consumer expects to fail carries the stage it fails at and
-    the paragraph the library departs from.
+    (an object file, no main required), diagnose (a compile that must fail with
+    the errors the suite's markers name, one per line in diagnostics) or skip. A
+    skipped file carries the reason; one the consumer expects to fail carries
+    the stage it fails at and the paragraph the library departs from.
     """
 
     path: str
@@ -110,6 +111,7 @@ class Test:
     expect: str = ""          # compile or run, for an expected failure
     paragraph: str = ""
     exceptions: list[str] = dataclasses.field(default_factory=list)
+    diagnostics: list[dict] = dataclasses.field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +236,10 @@ def lit_features(config: Config) -> set[str]:
     return features
 
 
+# A diagnostic is checked whatever the consumer's warning flags, and a note need not be expected.
+# SHELL: keeps CMake from merging the repeated -Xclang.
+LIBCXX_VERIFY = ["-Wno-error", "SHELL:-Xclang -verify", "SHELL:-Xclang -verify-ignore-unexpected=note", "-ferror-limit=0"]
+
 LIT_MARKER = re.compile(r"^\s*//\s*(REQUIRES|UNSUPPORTED|XFAIL|ADDITIONAL_COMPILE_FLAGS|FILE_DEPENDENCIES|RUN|MODULE_DEPENDENCIES)(?:\((.*?)\))?\s*:(.*)$")
 
 
@@ -246,8 +252,12 @@ def libcxx_classify(path: str, text: str, config: Config) -> tuple[str, str, lis
         kind = "build"
     elif name.endswith(".pass.cpp"):
         kind = "run"
-    elif name.endswith(".verify.cpp") or name.endswith(".compile.fail.cpp"):
-        return "skip", "a test of diagnostics, run in a second pass", [], ""
+    elif name.endswith(".verify.cpp"):
+        if config.compiler not in ("clang", "apple-clang"):
+            return "skip", "a test of Clang's diagnostics, which only Clang verifies", [], ""
+        kind = "compile"
+    elif name.endswith(".compile.fail.cpp"):
+        kind = "compile"
     elif name.endswith(".cpp"):
         return "skip", "not a test lit runs on its own", [], ""
     else:
@@ -284,6 +294,11 @@ def libcxx_classify(path: str, text: str, config: Config) -> tuple[str, str, lis
             if "%{" in value:
                 return "skip", f"ADDITIONAL_COMPILE_FLAGS with a lit substitution: {value}", [], ""
             options += shlex.split(value)
+    if name.endswith(".verify.cpp"):
+        # lit's %{verify} less -fsyntax-only, so a test expecting only warnings keeps its object between builds.
+        options = [*LIBCXX_VERIFY, *options]
+    if name.endswith(".compile.fail.cpp"):
+        xfail = xfail or ".compile.fail.cpp"
     return kind, "", options, xfail
 
 
@@ -442,8 +457,8 @@ def libstdcxx_classify(path: str, text: str, config: Config) -> tuple[str, str, 
                 return "skip", f"dg-do {action}, which builds no test", [], ""
             if fails:
                 xfail = f"dg-do {' '.join(words)}"
-        elif directive in ("dg-error", "dg-excess-errors"):
-            return "skip", "a test of diagnostics, run in a second pass", [], ""
+        elif directive == "dg-excess-errors":
+            return "skip", "dg-excess-errors, whose errors no directive names", [], ""
         elif directive in ("dg-options", "dg-additional-options"):
             holds, _ = dg_selector_clause(words[1:], config)
             if holds and words:
@@ -474,7 +489,82 @@ def libstdcxx_classify(path: str, text: str, config: Config) -> tuple[str, str, 
     for words, directive in run_xfails:
         if kind == "run" and dg_options_selected(words, options, config):
             xfail = directive
+    if libstdcxx_diagnostics(text, config):
+        if config.compiler != "gcc":
+            return "skip", "a test of GCC's diagnostics, which only GCC reports", [], ""
+        if kind != "compile":
+            return "skip", f"dg-error in a {kind} test, which this adapter does not interpret", [], ""
+        kind, xfail = "diagnose", ""
     return kind, "", options, xfail
+
+
+def libstdcxx_diagnostics(text: str, config: Config) -> list[dict]:
+    """The errors a test's dg-error directives expect in this build: each a line, 0 for any, and a pattern."""
+    expected = []
+    for m in DG_DIRECTIVE.finditer(text):
+        words = dg_words(m.group(2))
+        if m.group(1) != "dg-error" or not words:
+            continue
+        holds, fails = dg_selector_clause(words[2:3], config)
+        if not holds or fails:
+            continue
+        here = text.count("\n", 0, m.start()) + 1
+        spec = words[3] if len(words) > 3 else "."
+        if re.fullmatch(r"\.(?:[-+]\d+)?", spec):
+            line = here + int(spec[1:] or 0)
+        else:
+            line = int(spec) if spec.isdigit() else 0
+        expected.append({"line": line, "pattern": unbrace(words[0])})
+    return expected
+
+
+DIAGNOSTIC = re.compile(r"^(.+?):(\d+):(?:\d+:)?\s*(.*)$")
+
+
+def check_diagnostics(output: str, source: str, expected: list[dict]) -> list[str]:
+    """Each expected error that no diagnostic in a compiler's output matches.
+
+    An error expected at a line is met by any diagnostic the source reports
+    there, its context lines included, whose text the pattern searches; one at
+    line 0, by any diagnostic anywhere. DejaGnu reads the patterns as Tcl
+    regular expressions, which agree with Python's on what libstdc++ writes.
+    """
+    origin = pathlib.Path(source).resolve()
+    reported = []
+    for line in output.splitlines():
+        m = DIAGNOSTIC.match(line.strip())
+        if m:
+            reported.append((pathlib.Path(m.group(1)).resolve() == origin, int(m.group(2)), m.group(3)))
+    missing = []
+    for e in expected:
+        try:
+            pattern = re.compile(e["pattern"])
+        except re.error:
+            pattern = re.compile(re.escape(e["pattern"]))
+        if not any(pattern.search(text) for at_source, line, text in reported if e["line"] == 0 or (at_source and line == e["line"])):
+            where = f"line {e['line']}" if e["line"] else "any line"
+            missing.append(f"no diagnostic at {where} matches {e['pattern']!r}")
+    return missing
+
+
+def check_main(argv: list[str]) -> int:
+    """Run a build that must fail, and fail unless its output carries every expected error.
+
+    std_test_suite.py --check-diagnostics <file.json> -- <build command>...
+    """
+    if len(argv) < 3 or argv[1] != "--":
+        raise SystemExit("usage: std_test_suite.py --check-diagnostics <file.json> -- <build command>...")
+    want = json.loads(pathlib.Path(argv[0]).read_text())
+    result = subprocess.run(argv[2:], capture_output=True, text=True)
+    output = result.stdout + result.stderr
+    print(output)
+    if result.returncode == 0:
+        print(f"std_test_suite: {want['source']} builds, but the suite expects it to fail with errors")
+        return 1
+    missing = check_diagnostics(output, want["source"], want["diagnostics"])
+    for message in missing:
+        print(f"std_test_suite: {want['source']}: {message}")
+    return 1 if missing else 0
 
 
 def dg_options_selected(words: list[str], options: list[str], config: Config) -> bool:
@@ -814,6 +904,8 @@ def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping,
             else:
                 kind, reason, options, xfail = suite.classify(path, text, config)
             test = Test(path, digest, kind, reason, options)
+            if kind == "diagnose":
+                test.diagnostics = libstdcxx_diagnostics(text, config)
             if xfail and kind != "skip":
                 test.expect, test.paragraph = ("run" if kind == "run" else "compile"), f"the suite's own {xfail}"
             if path in expected:
@@ -826,6 +918,9 @@ def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping,
                     errors.append(f"{path}: expected to fail at run, but it is a {kind} test")
                 else:
                     test.expect, test.paragraph = e["fails"], e["paragraph"]
+                    # The consumer's reason replaces the suite's: it fails to compile, with whatever errors.
+                    if kind == "diagnose":
+                        test.kind, test.diagnostics = "compile", []
             tests.append(test)
     for path in sorted(set(expected) - seen):
         errors.append(f"{path}: expected to fail, but no taken directory holds it at this tag")
@@ -889,6 +984,7 @@ def cmake_quote(value: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--suite", required=True, choices=sorted(SUITES))
+    parser.add_argument("--name", default="", help="what names this run's targets, tests and labels, by default the suite: one per subject")
     parser.add_argument("--mapping", required=True, action="append", type=pathlib.Path)
     parser.add_argument("--tree", required=True, type=pathlib.Path, help="where the suite is checked out")
     parser.add_argument("--binary-dir", required=True, type=pathlib.Path, help="where the rewritten tests and tests.cmake go")
@@ -903,6 +999,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-rtti", action="store_true")
     parser.add_argument("--offline", action="store_true", help="use the tree as it is, without fetching")
     args = parser.parse_args(argv)
+    name = args.name or args.suite
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+        raise SystemExit(f"--name {name}: lower-case words joined by hyphens")
+    title = name if name == args.suite else f"{name} ({args.suite})"
 
     suite = SUITES[args.suite]
     config = Config(args.compiler, args.version, args.stdlib, args.std, args.target, not args.no_exceptions, not args.no_rtti)
@@ -935,12 +1035,20 @@ def main(argv: list[str] | None = None) -> int:
         source.parent.mkdir(parents=True, exist_ok=True)
         if not source.is_file() or source.read_text() != rewritten:
             source.write_text(rewritten)
+        target = target_name(name, suite, test.path)
+        diagnostics = ""
+        if test.kind == "diagnose":
+            file = out / "diagnostics" / f"{target}.json"
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text(json.dumps({"source": source.as_posix(), "diagnostics": test.diagnostics}, indent=2) + "\n")
+            diagnostics = f" DIAGNOSTICS {cmake_quote(file.as_posix())}"
         calls.append(
-            f"std_test_suite_add({target_name(args.suite, suite, test.path)}"
-            f" SUITE {args.suite} KIND {test.kind} SOURCE {cmake_quote(source.as_posix())}"
+            f"std_test_suite_add({target}"
+            f" SUITE {name} KIND {test.kind} SOURCE {cmake_quote(source.as_posix())}"
             # The copy's relative includes resolve from the directory its original sits in.
             f" INCLUDE_DIRS {cmake_quote((args.tree / test.path).parent.resolve().as_posix())}"
             + (f" EXPECT {test.expect}" if test.expect else "")
+            + diagnostics
             + (" OPTIONS " + " ".join(cmake_quote(o) for o in test.options) if test.options else "")
             + ")"
         )
@@ -953,8 +1061,8 @@ def main(argv: list[str] | None = None) -> int:
     roots = ([out / "support"] if support else []) + [args.tree / s for s in suite.support]
     includes = " ".join(cmake_quote(r.as_posix()) for r in roots)
     body = [
-        f"# Generated by std_test_suite.py for {args.suite} at {tag}; do not edit.",
-        f"set(STD_TEST_SUITE_INCLUDE_DIRS_{args.suite.replace('-', '_')} {includes})",
+        f"# Generated by std_test_suite.py for {title} at {tag}; do not edit.",
+        f"set(STD_TEST_SUITE_INCLUDE_DIRS_{name.replace('-', '_')} {includes})",
         *calls,
         "",
     ]
@@ -964,6 +1072,7 @@ def main(argv: list[str] | None = None) -> int:
     if not cmake_file.is_file() or cmake_file.read_text() != "\n".join(body):
         cmake_file.write_text("\n".join(body))
     manifest = {
+        "name": name,
         "suite": args.suite,
         "repository": suite.repository,
         "tag": tag,
@@ -976,9 +1085,9 @@ def main(argv: list[str] | None = None) -> int:
         key = f"expected {test.expect} failure" if test.expect else test.kind
         counts[key] = counts.get(key, 0) + 1
     rewritten_headers = f", {len(support)} rewritten support header{'s' if len(support) != 1 else ''}" if support else ""
-    print(f"std_test_suite: {args.suite} at {tag}: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())) + rewritten_headers)
+    print(f"std_test_suite: {title} at {tag}: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())) + rewritten_headers)
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(check_main(sys.argv[2:]) if sys.argv[1:2] == ["--check-diagnostics"] else main())

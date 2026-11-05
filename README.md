@@ -801,13 +801,14 @@ caller rather than this repository.
 | `vcpkg-install` | `vcpkg install`, retried around a download vcpkg will not retry |
 | `clang-tidy` | clang-tidy's passes over a configured build, the one script CI and a local run share |
 | `gcovr` | The coverage gate's gcovr run and its exclusions, the one script CI and a local run share |
+| `layering` | The header layering check over a caller's folders, read from the `#include` lines, the one script CI and a local run share |
 
 Anything a workflow needs to read from here therefore has to arrive as an
 action: an action is fetched from its own repository and `GITHUB_ACTION_PATH`
 points at it. That is why the overlay triplets are an action rather than eight
-files copied into four repositories, and why the clang-tidy passes and the
-coverage gate are scripts behind actions: a developer then runs before pushing
-the very scripts CI runs.
+files copied into four repositories, and why the clang-tidy passes, the
+coverage gate and the layering check are scripts behind actions: a developer
+then runs before pushing the very scripts CI runs.
 
 ## Conventions
 
