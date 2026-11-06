@@ -25,15 +25,16 @@ on:
 jobs:
   bump:
     runs-on: ubuntu-24.04
+    # actions: write to dispatch the checks the pull request's own event cannot start, and issues: write for the
+    # issue that stands in for the pull request where the repository keeps Actions from opening one.
     permissions:
       contents: write
       pull-requests: write
+      actions: write
+      issues: write
     env:
       BRANCH: test-suite-pins
-      # A pull request the default token opens starts no workflow, so its checks
-      # never report; a token of the maintainer's, stored under this name, makes
-      # the pull request run CI like any other.
-      GH_TOKEN: ${{ secrets.TEST_SUITE_PINS_TOKEN || github.token }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,7 +58,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
-          git commit -am "Move the standard library test suites' pins to the newest release of each series"
+          title="Move the standard library test suites' pins to the newest release of each series"
+          git commit -am "$title"
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
           {
             echo "The standard library test suites' tags in \`.github/actions/toolchain/toolchains.json\`, each moved to the newest release of its series:"
@@ -68,8 +70,29 @@ jobs:
             echo
             echo "Opened by \`.github/workflows/test-suite-pins.yml\`."
           } > "$RUNNER_TEMP/body.md"
+          # A push or pull request this job's token makes starts no workflow, but
+          # a dispatch does. The dispatched run checks the branch's head commit,
+          # which is the pull request's, so its checks report there as a pull
+          # request's own would.
           if gh pr view "$BRANCH" --json state --jq .state 2>/dev/null | grep -qx OPEN; then
             gh pr edit "$BRANCH" --body-file "$RUNNER_TEMP/body.md"
+            gh workflow run self-check.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          elif gh pr create --head "$BRANCH" --base main --title "$title" --body-file "$RUNNER_TEMP/body.md"; then
+            gh workflow run self-check.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
           else
-            gh pr create --head "$BRANCH" --base main --title "Move the standard library test suites' pins to the newest release of each series" --body-file "$RUNNER_TEMP/body.md"
+            # The repository's "Allow GitHub Actions to create and approve pull
+            # requests" is off. An issue links the pushed branch instead, and the
+            # pull request a maintainer opens from the link runs CI like any other
+            # and closes the issue when it merges.
+            issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n 1)
+            if [ -z "$issue" ]; then
+              issue=$(basename "$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "Pending.")")
+            fi
+            query=$(TITLE="$title" ISSUE="$issue" python3 -I -c 'import os, urllib.parse; print(urllib.parse.urlencode({"expand": 1, "title": os.environ["TITLE"], "body": "Closes #" + os.environ["ISSUE"] + "."}))')
+            {
+              echo "The branch \`$BRANCH\` is pushed, but this repository does not let GitHub Actions open its pull request. [Open it](https://github.com/$GITHUB_REPOSITORY/compare/main...$BRANCH?$query)."
+              echo
+              cat "$RUNNER_TEMP/body.md"
+            } > "$RUNNER_TEMP/issue.md"
+            gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/issue.md"
           fi
