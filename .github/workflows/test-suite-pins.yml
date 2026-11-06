@@ -25,15 +25,14 @@ on:
 jobs:
   bump:
     runs-on: ubuntu-24.04
+    # actions: write to dispatch the checks the pull request's own event cannot start.
     permissions:
       contents: write
       pull-requests: write
+      actions: write
     env:
       BRANCH: test-suite-pins
-      # A pull request the default token opens starts no workflow, so its checks
-      # never report; a token of the maintainer's, stored under this name, makes
-      # the pull request run CI like any other.
-      GH_TOKEN: ${{ secrets.TEST_SUITE_PINS_TOKEN || github.token }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,3 +72,8 @@ jobs:
           else
             gh pr create --head "$BRANCH" --base main --title "Move the standard library test suites' pins to the newest release of each series" --body-file "$RUNNER_TEMP/body.md"
           fi
+          # A push or pull request this job's token makes starts no workflow, but
+          # a dispatch does. The dispatched run checks the branch's head commit,
+          # which is the pull request's, so its checks report there as a pull
+          # request's own would.
+          gh workflow run self-check.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
