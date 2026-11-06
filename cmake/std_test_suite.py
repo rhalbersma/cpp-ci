@@ -114,7 +114,7 @@ class Test:
     reason: str = ""
     options: list[str] = dataclasses.field(default_factory=list)
     link_options: list[str] = dataclasses.field(default_factory=list)
-    data: bool = False        # runs beside the data files the suite stages, such as libstdc++'s dg-additional-files
+    data: list[str] = dataclasses.field(default_factory=list)  # files the suite stages where the test runs
     expect: str = ""          # compile or run, for an expected failure
     paragraph: str = ""
     exceptions: list[str] = dataclasses.field(default_factory=list)
@@ -216,6 +216,8 @@ def lit_features(config: Config) -> set[str]:
     """
     year = config.std
     features = {f"c++{year:02d}"}
+    # libc++'s lit config names each dialect at least as new as the one built, for a test that requires C++17 or later.
+    features |= {f"std-at-least-c++{y:02d}" for y in STANDARDS if std_rank(y) <= std_rank(year)}
     name = config.compiler
     parts = config.version.split(".")
     features.add(name)
@@ -554,6 +556,20 @@ def check_diagnostics(output: str, source: str, expected: list[dict]) -> list[st
     return missing
 
 
+# Where DejaGnu finds the files a test's dg-additional-files names, to copy them into where it runs.
+LIBSTDCXX_DATA = "libstdc++-v3/testsuite/data"
+
+
+def libstdcxx_additional_files(text: str) -> list[str]:
+    """The files a test's dg-additional-files directives name."""
+    names: list[str] = []
+    for m in DG_DIRECTIVE.finditer(text):
+        words = dg_words(m.group(2))
+        if m.group(1) == "dg-additional-files" and words:
+            names += unbrace(words[0]).split()
+    return names
+
+
 def check_main(argv: list[str]) -> int:
     """Run a build that must fail, and fail unless its output carries every expected error.
 
@@ -695,7 +711,7 @@ SUITES = {
         toolchain="gcc",
         root="libstdc++-v3/testsuite/",
         support=("libstdc++-v3/testsuite/util",),
-        fetch=("/libstdc++-v3/testsuite/util/", "/libstdc++-v3/testsuite/**/*.h"),
+        fetch=("/libstdc++-v3/testsuite/util/", "/libstdc++-v3/testsuite/**/*.h", f"/{LIBSTDCXX_DATA}/"),
         classify=libstdcxx_classify,
     ),
     "msvc-stl": Suite(
@@ -959,7 +975,11 @@ def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping,
             kind, reason, options, xfail = classify(suite_name, suite, path, text, config, tree)
             link = [o for o in options if o.startswith(("-l", "-Wl,"))]
             test = Test(path, digest, kind, reason, [o for o in options if o not in link], link)
-            test.data = suite_name == "libstdcxx" and kind == "run" and "dg-additional-files" in text
+            if suite_name == "libstdcxx" and kind == "run":
+                test.data = libstdcxx_additional_files(text)
+                missing = [d for d in test.data if not (tree / LIBSTDCXX_DATA / d).is_file()]
+                if missing:
+                    test.kind, test.reason, test.data = "skip", f"dg-additional-files names {', '.join(missing)}, which {LIBSTDCXX_DATA} lacks", []
             if kind == "diagnose":
                 test.diagnostics = libstdcxx_diagnostics(text, config)
             if xfail and kind != "skip":
@@ -1049,6 +1069,18 @@ def target_name(suite_name: str, suite: Suite, path: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.+-]", ".", f"{suite_name}.{stem}")
 
 
+def stage(tree: pathlib.Path, out: pathlib.Path, target: str, names: list[str]) -> pathlib.Path:
+    """A directory of the test's own in the build tree, holding the data files it opens, as DejaGnu's copy would."""
+    where = out / "data" / target
+    where.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        data = (tree / LIBSTDCXX_DATA / name).read_bytes()
+        copy = where / name
+        if not copy.is_file() or copy.read_bytes() != data:
+            copy.write_bytes(data)
+    return where
+
+
 def cmake_quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace(";", "\\;") + '"'
 
@@ -1125,8 +1157,7 @@ def main(argv: list[str] | None = None) -> int:
             + diagnostics
             + (" OPTIONS " + " ".join(cmake_quote(o) for o in test.options) if test.options else "")
             + (" LINK_OPTIONS " + " ".join(cmake_quote(o) for o in test.link_options) if test.link_options else "")
-            # DejaGnu copies a test's additional files into where it runs; its own directory already holds them.
-            + (f" WORKING_DIRECTORY {cmake_quote((args.tree / test.path).parent.resolve().as_posix())}" if test.data else "")
+            + (f" WORKING_DIRECTORY {cmake_quote(stage(args.tree, out, target, test.data).as_posix())}" if test.data else "")
             + ")"
         )
     stale = sorted(set(errors)) if args.warn_stale else []

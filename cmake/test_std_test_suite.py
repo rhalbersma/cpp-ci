@@ -73,6 +73,8 @@ class Libcxx(unittest.TestCase):
 
     def test_requires(self):
         self.assertEqual(self.classify("a.pass.cpp", "// REQUIRES: std-at-least-c++26\n")[0], "skip")
+        self.assertEqual(self.classify("a.pass.cpp", "// REQUIRES: std-at-least-c++17\n")[0], "run")
+        self.assertEqual(self.classify("a.pass.cpp", "// REQUIRES: std-at-least-c++26\n", CLANG)[0], "run")
         self.assertEqual(self.classify("a.pass.cpp", "// REQUIRES: c++23 || c++26\n")[0], "run")
 
     def test_conditional_flags(self):
@@ -461,12 +463,19 @@ class Registration(unittest.TestCase):
             self.assertNotIn(' OPTIONS "-lstdc++exp"', cmake)
 
     def test_additional_files(self):
-        # chi2_q_document_words.cc opens the text DejaGnu copies beside it, which its own directory holds.
-        files = {f"{self.HASH}/words.cc": '// { dg-additional-files "words.txt" }\nauto h = std::hash<int>();\nint main() {}\n', f"{self.HASH}/words.txt": "a b c\n"}
+        # chi2_q_document_words.cc opens a text DejaGnu copies from testsuite/data into where it runs.
+        files = {f"{self.HASH}/words.cc": '// { dg-additional-files "words.txt" }\nauto h = std::hash<int>();\nint main() {}\n', "libstdc++-v3/testsuite/data/words.txt": "a b c\n"}
         with tempfile.TemporaryDirectory() as root:
             out, status = self.libstdcxx_run(pathlib.Path(root), files, self.TAKE_HASH)
             self.assertEqual(status, 0)
-            self.assertIn(f' WORKING_DIRECTORY "{(pathlib.Path(root) / "tree" / self.HASH).resolve().as_posix()}")', (out / "tests.cmake").read_text())
+            where = out / "data" / "libstdcxx.20_util.hash.words"
+            self.assertEqual((where / "words.txt").read_text(), "a b c\n")
+            self.assertIn(f' WORKING_DIRECTORY "{where.as_posix()}")', (out / "tests.cmake").read_text())
+        files.pop("libstdc++-v3/testsuite/data/words.txt")
+        with tempfile.TemporaryDirectory() as root:
+            out, status = self.libstdcxx_run(pathlib.Path(root), files, self.TAKE_HASH)
+            self.assertEqual(status, 0)
+            self.assertIn("dg-additional-files names words.txt", (out / "manifest.json").read_text())
 
     def expect(self, path, text, extra=""):
         return f'[[libstdcxx.expect]]\nfile = "{path}"\nsha256 = "{sts.sha256(text.encode())}"\nfails = "compile"\nparagraph = "p"\n{extra}'

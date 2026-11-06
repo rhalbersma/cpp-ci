@@ -843,8 +843,8 @@ them.
 
 | Suite | Fetched from | Pinned by | Runnable tests | Markers read | Support headers |
 | :---- | :----------- | :-------- | :------------- | :----------- | :-------------- |
-| `libcxx` | `llvm/llvm-project` | `clang` stable | `*.pass.cpp`, `*.compile.pass.cpp`, `*.link.pass.cpp` | `REQUIRES`, `UNSUPPORTED`, `XFAIL`, `ADDITIONAL_COMPILE_FLAGS` | `libcxx/test/support/` |
-| `libstdcxx` | `gcc-mirror/gcc` | `gcc` stable and development | `*.cc` | `dg-do`, `dg-options`, `dg-additional-options`, `dg-require-*`, `dg-skip-if`, `dg-xfail-run-if` | `libstdc++-v3/testsuite/util/` |
+| `libcxx` | `llvm/llvm-project` | `clang` stable | `*.pass.cpp`, `*.compile.pass.cpp`, `*.link.pass.cpp`, `*.compile.fail.cpp`, `*.verify.cpp` | `REQUIRES`, `UNSUPPORTED`, `XFAIL`, `ADDITIONAL_COMPILE_FLAGS` | `libcxx/test/support/` |
+| `libstdcxx` | `gcc-mirror/gcc` | `gcc` stable and development | `*.cc` | `dg-do`, `dg-options`, `dg-additional-options`, `dg-additional-files`, `dg-require-*`, `dg-skip-if`, `dg-xfail-run-if`, `dg-error` | `libstdc++-v3/testsuite/util/` |
 | `msvc-stl` | `microsoft/STL` | `msvc` stable | `tests/std/tests/*/test.cpp` | the test directory's `env.lst` | `tests/std/include/` |
 
 The pin is the `test_suite` key on the family's rung in
@@ -952,8 +952,10 @@ marker's `-l` and `-Wl,` options go to the link, the rest to the compile. The
 MSVC STL's copies of libc++'s tests, which include `msvc_stdlib_force_include.h`
 from the STL's LLVM submodule, are skipped with that reason, and a test of its
 own that includes `<stacktrace>` links `-lstdc++exp` where libstdc++ keeps
-`std::stacktrace` there, as 14 and 15 do. A test whose markers this adapter does
-not interpret is skipped too: custom `RUN` lines, a lit substitution, an unknown
+`std::stacktrace` there, as 14 and 15 do. A libstdc++ test that names
+`dg-additional-files` runs in a directory of its own in the build tree, holding
+copies of those files from `testsuite/data/`, as DejaGnu's run directory would.
+A test whose markers this adapter does not interpret is skipped too: custom `RUN` lines, a lit substitution, an unknown
 `dg-add-options`. Each lands in the manifest as a skip with a reason, never as
 a pass.
 
