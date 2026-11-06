@@ -61,8 +61,11 @@ runs:
         sudo install -m 644 "$key" /etc/apt/trusted.gpg.d/apt.llvm.org.asc
         rm "$key"
         codename=$(lsb_release -cs)
-        sudo add-apt-repository -y "deb https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}${LLVM_SUFFIX} main"
-        sudo apt-get update
+        # Every apt call runs under a time limit: a mirror that stops answering
+        # mid-transfer holds apt past its own timeouts, for hours, where a
+        # failed step costs minutes.
+        sudo timeout --kill-after=30s 10m add-apt-repository -y "deb https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}${LLVM_SUFFIX} main"
+        sudo timeout --kill-after=30s 10m apt-get update
 
         packages=(
           "clang-${VERSION}"
@@ -79,4 +82,4 @@ runs:
         if [ "$TIDY" = "true" ]; then
           packages+=("clang-tidy-${VERSION}")
         fi
-        sudo apt-get install -y "${packages[@]}"
+        sudo timeout --kill-after=30s 20m apt-get install -y "${packages[@]}"
