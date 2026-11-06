@@ -39,7 +39,9 @@
 # stale mapping entry is reported rather than failing configuration, an entry
 # whose file merely hashes differently still applies where its line still
 # reads, and the manifest lists every stale entry. The tests then show what the
-# next release changes and breaks.
+# next release changes and breaks: each is left out of all and built by a CTest
+# test of its own, which a run test of it requires, so a test trunk broke fails
+# alone and the build of the consumer's tree still passes.
 #
 # Needs git and a Python of 3.11 or later, for tomllib. A consumer reaches this
 # module through FetchContent of this repository at the commit its workflows
@@ -62,7 +64,7 @@ function(std_test_suite_add name)
         target_link_libraries(${name} PRIVATE ${STD_TEST_SUITE_LINK_LIBRARIES})
         target_compile_options(${name} PRIVATE ${arg_OPTIONS})
         set(labels std-test-suite ${arg_SUITE})
-        if(NOT arg_EXPECT STREQUAL "compile" AND NOT arg_KIND STREQUAL "diagnose")
+        if(NOT arg_EXPECT STREQUAL "compile" AND NOT arg_KIND STREQUAL "diagnose" AND NOT STD_TEST_SUITE_DEFERRED)
                 add_dependencies(std-test-suite-${arg_SUITE} ${name})
         endif()
         if(arg_KIND STREQUAL "diagnose")
@@ -75,6 +77,20 @@ function(std_test_suite_add name)
                 add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name} --config $<CONFIG>)
                 # Builds of a shared tree do not run side by side.
                 set_tests_properties(${name} PROPERTIES WILL_FAIL TRUE LABELS "${labels}" RESOURCE_LOCK std-test-suite-build)
+        elseif(STD_TEST_SUITE_DEFERRED)
+                # A run against a trunk builds each test in a CTest test of its own, out of all, so a test that trunk
+                # broke fails alone, the rest still build and run, and the build of the tree it sits in still passes.
+                set_target_properties(${name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+                add_test(NAME ${name}.build COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name} --config $<CONFIG>)
+                set_tests_properties(${name}.build PROPERTIES LABELS "${labels}" RESOURCE_LOCK std-test-suite-build FIXTURES_SETUP ${name})
+                if(arg_KIND STREQUAL "run" AND arg_EXPECT STREQUAL "run")
+                        add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -DTEST=$<TARGET_FILE:${name}> -P ${STD_TEST_SUITE_EXPECT_FAILURE})
+                elseif(arg_KIND STREQUAL "run")
+                        add_test(NAME ${name} COMMAND ${name})
+                endif()
+                if(arg_KIND STREQUAL "run")
+                        set_tests_properties(${name} PROPERTIES LABELS "${labels}" FIXTURES_REQUIRED ${name})
+                endif()
         elseif(arg_KIND STREQUAL "run" AND arg_EXPECT STREQUAL "run")
                 # WILL_FAIL would count a failed assert's abort as a failure, not the one expected.
                 add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -DTEST=$<TARGET_FILE:${name}> -P ${STD_TEST_SUITE_EXPECT_FAILURE})
@@ -188,6 +204,7 @@ function(std_test_suite suite)
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${arg_MAPPING} "${STD_TEST_SUITE_SCRIPT}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../.github/actions/toolchain/toolchains.json")
 
         set(STD_TEST_SUITE_LINK_LIBRARIES ${arg_LINK_LIBRARIES})
+        set(STD_TEST_SUITE_DEFERRED ${arg_WARN_STALE})
         if(NOT TARGET std-test-suite-${arg_NAME})
                 add_custom_target(std-test-suite-${arg_NAME})
         endif()
