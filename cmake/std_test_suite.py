@@ -78,6 +78,7 @@ class Config:
     target: str              # e.g. x86_64-pc-linux-gnu
     exceptions: bool = True
     rtti: bool = True
+    stacktrace_link: tuple[str, ...] = ()   # what links std::stacktrace, e.g. -lstdc++exp before libstdc++ 16
 
     @property
     def gcc_style(self) -> bool:
@@ -112,6 +113,8 @@ class Test:
     kind: str
     reason: str = ""
     options: list[str] = dataclasses.field(default_factory=list)
+    link_options: list[str] = dataclasses.field(default_factory=list)
+    data: bool = False        # runs beside the data files the suite stages, such as libstdc++'s dg-additional-files
     expect: str = ""          # compile or run, for an expected failure
     paragraph: str = ""
     exceptions: list[str] = dataclasses.field(default_factory=list)
@@ -643,10 +646,15 @@ def msvc_classify(path: str, text: str, config: Config, tree: pathlib.Path) -> t
         kind = "compile"
     else:
         return "skip", "not a test source", [], ""
+    if includes_any(text, ("msvc_stdlib_force_include.h",)):
+        return "skip", "a copy of a libc++ test, whose msvc_stdlib_force_include.h lives in the STL's LLVM submodule, which this adapter does not fetch", [], ""
     env = (tree / path).parent / "env.lst"
     if not env.is_file():
         return "skip", "no env.lst beside it", [], ""
-    return kind, "", msvc_options(msvc_env(env, tree.resolve()), config), ""
+    options = msvc_options(msvc_env(env, tree.resolve()), config)
+    if includes_any(text, ("stacktrace",)):
+        options += config.stacktrace_link
+    return kind, "", options, ""
 
 
 # ---------------------------------------------------------------------------
@@ -761,6 +769,11 @@ class Mapping:
     assertion   per-line exceptions: a line, matched after stripping, in a
                 file of a given hash, either replaced or dropped, each naming
                 the departure it stands for
+
+    An expect or assertion entry may carry when, a lit expression over the
+    features libc++'s markers read, such as "stdlib=libc++" or "gcc &&
+    c++23": the entry applies only to a build it holds for. Its hash and its
+    line are checked on every build, so it goes stale on each leg alike.
     """
 
     take: list[dict] = dataclasses.field(default_factory=list)
@@ -780,8 +793,8 @@ MAPPING_KEYS: dict[str, tuple[set[str], set[str]] | None] = {
     "support": ({"path"}, set()),
     "include": None,
     "rewrite": ({"to"}, {"from", "regex"}),
-    "expect": ({"file", "sha256", "fails", "paragraph"}, set()),
-    "assertion": ({"file", "sha256", "line", "departure"}, {"to", "drop"}),
+    "expect": ({"file", "sha256", "fails", "paragraph"}, {"when"}),
+    "assertion": ({"file", "sha256", "line", "departure"}, {"to", "drop", "when"}),
 }
 
 
@@ -836,18 +849,30 @@ def load_mapping(paths: Iterable[pathlib.Path], suite: str) -> Mapping:
             raise SystemExit(f"exception in {entry['file']}: name the departure it stands for")
         if ("to" in entry) == bool(entry.get("drop")):
             raise SystemExit(f"exception in {entry['file']}: give exactly one of to and drop = true")
+    for entry in [*mapping.expect, *mapping.assertion]:
+        if "when" in entry:
+            try:
+                lit_eval(entry["when"], set())
+            except ValueError as error:
+                raise SystemExit(f"{entry['file']}: when {entry['when']!r}: {error}") from None
     return mapping
+
+
+def applies(entry: dict, config: Config | None) -> bool:
+    """Whether an expect or assertion entry applies to this build: it has no when, or its when holds."""
+    return "when" not in entry or (config is not None and lit_eval(entry["when"], lit_features(config)))
 
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def rewrite(text: str, path: str, digest: str, mapping: Mapping, errors: list[str], lenient: bool = False) -> tuple[str, list[str], bool]:
+def rewrite(text: str, path: str, digest: str, mapping: Mapping, errors: list[str], lenient: bool = False, config: Config | None = None) -> tuple[str, list[str], bool]:
     """The build-tree copy of one test, its exceptions applied, and whether any spelling rewrite changed it.
 
     Exceptions apply to the original lines, then the spelling rewrites to the
-    whole text, replacements included.
+    whole text, replacements included. An exception whose when does not hold
+    for this build is still checked against the file, and left unapplied.
     """
     applied: list[str] = []
     lines = text.split("\n")
@@ -862,6 +887,8 @@ def rewrite(text: str, path: str, digest: str, mapping: Mapping, errors: list[st
         hits = [i for i, line in enumerate(lines) if line.strip() == wanted]
         if not hits:
             errors.append(f"{path}: no line reads {wanted!r}")
+            continue
+        if not applies(entry, config):
             continue
         for i in hits:
             indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
@@ -883,9 +910,34 @@ def rewrite(text: str, path: str, digest: str, mapping: Mapping, errors: list[st
 # The run
 # ---------------------------------------------------------------------------
 
+def classify(suite_name: str, suite: Suite, path: str, text: str, config: Config, tree: pathlib.Path) -> tuple[str, str, list[str], str]:
+    if suite_name == "msvc-stl":
+        return suite.classify(path, text, config, tree)
+    return suite.classify(path, text, config)
+
+
+# The builds a suite is meant for, one per standard library, against which a test skipped here is asked whether it runs at all.
+HOMES = (("gcc", "libstdc++"), ("clang", "libc++"), ("msvc", "msvc"))
+
+
+def runs_elsewhere(suite_name: str, suite: Suite, path: str, text: str, config: Config, tree: pathlib.Path) -> bool:
+    """Whether the suite's markers run a test this build skips on some other standard library's build of the same dialect."""
+    for compiler, stdlib in HOMES:
+        other = dataclasses.replace(config, compiler=compiler, stdlib=stdlib)
+        if other != config and classify(suite_name, suite, path, text, other, tree)[0] != "skip":
+            return True
+    return False
+
+
 def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping, config: Config, errors: list[str], lenient: bool = False) -> list[Test]:
     tests: list[Test] = []
-    expected = {e["file"]: e for e in mapping.expect}
+    expected: dict[str, dict] = {}
+    for e in mapping.expect:
+        if applies(e, config):
+            if e["file"] in expected:
+                errors.append(f"{e['file']}: two expected failures apply to this build")
+            expected[e["file"]] = e
+    digests = {e["file"]: e.get("sha256") for e in mapping.expect}
     seen: set[str] = set()
     for entry in mapping.take:
         base = tree / entry["path"].strip("/")
@@ -904,15 +956,16 @@ def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping,
             if select and not select.search(text):
                 tests.append(Test(path, digest, "skip", f"does not match {entry['select']!r}"))
                 continue
-            if suite_name == "msvc-stl":
-                kind, reason, options, xfail = suite.classify(path, text, config, tree)
-            else:
-                kind, reason, options, xfail = suite.classify(path, text, config)
-            test = Test(path, digest, kind, reason, options)
+            kind, reason, options, xfail = classify(suite_name, suite, path, text, config, tree)
+            link = [o for o in options if o.startswith(("-l", "-Wl,"))]
+            test = Test(path, digest, kind, reason, [o for o in options if o not in link], link)
+            test.data = suite_name == "libstdcxx" and kind == "run" and "dg-additional-files" in text
             if kind == "diagnose":
                 test.diagnostics = libstdcxx_diagnostics(text, config)
             if xfail and kind != "skip":
                 test.expect, test.paragraph = ("run" if kind == "run" else "compile"), f"the suite's own {xfail}"
+            if path in digests and path not in expected and digests[path] != digest:
+                errors.append(f"{path}: its expected failure was written against sha256 {digests[path]}, the file is now {digest}")
             if path in expected:
                 e = expected[path]
                 stale = e.get("sha256") != digest
@@ -920,8 +973,11 @@ def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping,
                     errors.append(f"{path}: its expected failure was written against sha256 {e.get('sha256')}, the file is now {digest}")
                 if stale and not lenient:
                     pass
+                elif kind == "skip" and runs_elsewhere(suite_name, suite, path, text, config, tree):
+                    # Expected to fail where the suite runs it; this build skips it, as a leg on another library does.
+                    pass
                 elif kind == "skip":
-                    errors.append(f"{path}: expected to fail, but the suite's markers skip it ({reason})")
+                    errors.append(f"{path}: expected to fail, but the suite's markers skip it on every standard library ({reason})")
                 elif e["fails"] == "run" and kind != "run":
                     errors.append(f"{path}: expected to fail at run, but it is a {kind} test")
                 else:
@@ -930,7 +986,7 @@ def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping,
                     if kind == "diagnose":
                         test.kind, test.diagnostics = "compile", []
             tests.append(test)
-    for path in sorted(set(expected) - seen):
+    for path in sorted(set(digests) - seen):
         errors.append(f"{path}: expected to fail, but no taken directory holds it at this tag")
     supported = {s["path"].strip("/") for s in mapping.support}
     for path in sorted({a["file"] for a in mapping.assertion} - seen - supported):
@@ -938,19 +994,27 @@ def collect(suite_name: str, suite: Suite, tree: pathlib.Path, mapping: Mapping,
     return tests
 
 
-def rewrite_support(suite: Suite, tree: pathlib.Path, out: pathlib.Path, mapping: Mapping, errors: list[str]) -> list[dict]:
+HEADER_SUFFIXES = (".h", ".hh", ".hpp", ".hxx", ".inc", ".ipp", ".tcc")
+
+
+def rewrite_support(suite: Suite, tree: pathlib.Path, out: pathlib.Path, mapping: Mapping, errors: list[str], config: Config | None = None) -> list[dict]:
     """The build-tree copy of each support header the mapping names, under the name a test includes it by.
 
-    A header that does not exist at this tag, lies outside the suite's support
-    headers, or that no rewrite changes, is an error: each is a mapping entry
-    that no longer does what it was written for.
+    A header under the suite's support headers lands under support/, which the
+    include path searches before the original. A header under a taken
+    directory, which its tests include by a relative path, lands beside their
+    rewritten copies, where a quoted include looks first. A header that does
+    not exist at this tag, lies under neither, or that no rewrite changes, is
+    an error: each is a mapping entry that no longer does what it was written for.
     """
     records = []
+    taken = [t["path"].strip("/") for t in mapping.take]
     for entry in mapping.support:
         path = entry["path"].strip("/")
         root = next((s for s in suite.support if path.startswith(s + "/")), None)
-        if root is None:
-            errors.append(f"support {path}: not under the suite's support headers, {', '.join(suite.support)}")
+        beside = root is None and path.endswith(HEADER_SUFFIXES) and any(path.startswith(t + "/") for t in taken)
+        if root is None and not beside:
+            errors.append(f"support {path}: neither under the suite's support headers, {', '.join(suite.support)}, nor a header under a taken directory")
             continue
         file = tree / path
         if not file.is_file():
@@ -958,16 +1022,16 @@ def rewrite_support(suite: Suite, tree: pathlib.Path, out: pathlib.Path, mapping
             continue
         data = file.read_bytes()
         digest = sha256(data)
-        rewritten, applied, touched = rewrite(data.decode("utf-8", errors="replace"), path, digest, mapping, errors)
+        rewritten, applied, touched = rewrite(data.decode("utf-8", errors="replace"), path, digest, mapping, errors, config=config)
         if not touched:
             errors.append(f"support {path}: no rewrite changes it")
             continue
-        name = path.removeprefix(root + "/")
-        copy = out / "support" / name
+        name = path.rsplit("/", 1)[-1] if beside else path.removeprefix(root + "/")
+        copy = out / "tests" / path if beside else out / "support" / name
         copy.parent.mkdir(parents=True, exist_ok=True)
         if not copy.is_file() or copy.read_text() != rewritten:
             copy.write_text(rewritten)
-        records.append({"path": path, "sha256": digest, "name": name, "exceptions": applied})
+        records.append({"path": path, "sha256": digest, "name": name, "beside": beside, "exceptions": applied})
     return records
 
 
@@ -1005,6 +1069,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--target", required=True)
     parser.add_argument("--no-exceptions", action="store_true")
     parser.add_argument("--no-rtti", action="store_true")
+    parser.add_argument("--stacktrace-link", action="append", default=[], help="a flag that links std::stacktrace, given to a test that includes <stacktrace>")
     parser.add_argument("--offline", action="store_true", help="use the tree as it is, without fetching")
     parser.add_argument("--warn-stale", action="store_true", help="report stale mapping entries and run anyway, for a trunk the mapping was not written for")
     args = parser.parse_args(argv)
@@ -1014,7 +1079,7 @@ def main(argv: list[str] | None = None) -> int:
     title = name if name == args.suite else f"{name} ({args.suite})"
 
     suite = SUITES[args.suite]
-    config = Config(args.compiler, args.version, args.stdlib, args.std, args.target, not args.no_exceptions, not args.no_rtti)
+    config = Config(args.compiler, args.version, args.stdlib, args.std, args.target, not args.no_exceptions, not args.no_rtti, tuple(args.stacktrace_link))
     mapping = load_mapping(args.mapping, args.suite)
     if not mapping.take:
         raise SystemExit(f"the mapping takes no directory from {args.suite}")
@@ -1026,14 +1091,14 @@ def main(argv: list[str] | None = None) -> int:
     tests = collect(args.suite, suite, args.tree, mapping, config, errors, args.warn_stale)
 
     out = args.binary_dir
-    support = rewrite_support(suite, args.tree, out, mapping, errors)
+    support = rewrite_support(suite, args.tree, out, mapping, errors, config)
     sources = out / "tests"
     calls = []
     for test in tests:
         if test.kind == "skip":
             continue
         text = (args.tree / test.path).read_bytes().decode("utf-8", errors="replace")
-        rewritten, test.exceptions, touched = rewrite(text, test.path, test.sha256, mapping, errors, args.warn_stale)
+        rewritten, test.exceptions, touched = rewrite(text, test.path, test.sha256, mapping, errors, args.warn_stale, config)
         # A test no rewrite reaches still names only the standard library's types, and would pass on its account.
         if not touched and not includes_any(text, (s["name"] for s in support)):
             if test.expect and not test.paragraph.startswith("the suite's own"):
@@ -1059,6 +1124,9 @@ def main(argv: list[str] | None = None) -> int:
             + (f" EXPECT {test.expect}" if test.expect else "")
             + diagnostics
             + (" OPTIONS " + " ".join(cmake_quote(o) for o in test.options) if test.options else "")
+            + (" LINK_OPTIONS " + " ".join(cmake_quote(o) for o in test.link_options) if test.link_options else "")
+            # DejaGnu copies a test's additional files into where it runs; its own directory already holds them.
+            + (f" WORKING_DIRECTORY {cmake_quote((args.tree / test.path).parent.resolve().as_posix())}" if test.data else "")
             + ")"
         )
     stale = sorted(set(errors)) if args.warn_stale else []
@@ -1070,7 +1138,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"std_test_suite: warning: {warning}", file=sys.stderr)
 
     # The rewritten support headers come first, so a test's include finds the copy before the original.
-    roots = ([out / "support"] if support else []) + [args.tree / s for s in suite.support]
+    roots = ([out / "support"] if any(not s["beside"] for s in support) else []) + [args.tree / s for s in suite.support]
     includes = " ".join(cmake_quote(r.as_posix()) for r in roots)
     body = [
         f"# Generated by std_test_suite.py for {title} at {tag}; do not edit.",

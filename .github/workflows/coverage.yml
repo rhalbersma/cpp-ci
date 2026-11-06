@@ -226,6 +226,7 @@ jobs:
       # The coverage gate and its exclusions, in the script a developer runs
       # before pushing; the script carries the reasons for each exclusion.
       - name: Generate coverage report
+        id: report
         uses: rhalbersma/cpp-ci/.github/actions/gcovr@f2c8315bf8c606db37fca1c261d54609066caf9c
         with:
           gcov: ${{ env.TOOLCHAIN_GCOV }}
@@ -233,8 +234,10 @@ jobs:
           fail_under_line: ${{ inputs.fail_under_line }}
           fail_under_branch: ${{ inputs.fail_under_branch }}
 
+      # The report publishes when the gate fails it, but not when an earlier step kept it from being made: a failed
+      # install would otherwise end in "No coverage reports found", which reads as the cause and hides the real one.
       - name: Publish coverage summary
-        if: always()
+        if: always() && steps.report.outcome != 'skipped'
         run: |
           {
             echo '### Line coverage (gcovr)'
@@ -246,7 +249,7 @@ jobs:
       # Without these the CLI's own gcov plugin blends an unfiltered second
       # pass in alongside coverage.xml, undoing the exclusions above.
       - name: Upload to Codecov
-        if: always()
+        if: always() && steps.report.outcome != 'skipped'
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
           files: build/coverage.xml
@@ -258,7 +261,7 @@ jobs:
           fail_ci_if_error: true
 
       - name: Upload coverage report
-        if: always()
+        if: always() && steps.report.outcome != 'skipped'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-xml

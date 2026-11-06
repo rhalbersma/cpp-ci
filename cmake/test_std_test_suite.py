@@ -203,6 +203,24 @@ class Msvc(unittest.TestCase):
             _, _, options, _ = sts.msvc_classify("tests/GH_1/test.cpp", "", GCC, root)
             self.assertEqual(options, ["-D_ITERATOR_DEBUG_LEVEL=0"])
 
+    def test_force_include(self):
+        # P0088R3_variant: a copy of libc++'s tests, which includes a header from the STL's LLVM submodule.
+        with tempfile.TemporaryDirectory() as root:
+            kind, reason, _, _ = sts.msvc_classify("tests/P0088R3_variant/test.cpp", "#include <msvc_stdlib_force_include.h> // Must precede\n", GCC, pathlib.Path(root))
+            self.assertEqual(kind, "skip")
+            self.assertIn("msvc_stdlib_force_include.h", reason)
+
+    def test_stacktrace_link(self):
+        # P0881R7_stacktrace: libstdc++ before 16 keeps std::stacktrace in libstdc++exp.
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            (root / "tests" / "P0881R7_stacktrace").mkdir(parents=True)
+            (root / "tests" / "P0881R7_stacktrace" / "env.lst").write_text('PM_CL="/EHsc /std:c++latest"\n')
+            config = sts.Config("gcc", "15.2.0", "libstdc++", 23, "x86_64-linux-gnu", stacktrace_link=("-lstdc++exp",))
+            self.assertEqual(sts.msvc_classify("tests/P0881R7_stacktrace/test.cpp", "#include <stacktrace>\n", config, root)[2], ["-lstdc++exp"])
+            self.assertEqual(sts.msvc_classify("tests/P0881R7_stacktrace/test.cpp", "#include <vector>\n", config, root)[2], [])
+            self.assertEqual(sts.msvc_classify("tests/P0881R7_stacktrace/test.cpp", "#include <stacktrace>\n", GCC, root)[2], [])
+
 
 class Mapping(unittest.TestCase):
     TEXT = "#include <vector>\nint main() {\n  static_assert(std::is_same_v<C::pointer, bool*>);\n  std::vector<bool> v;\n}\n"
@@ -241,6 +259,24 @@ class Mapping(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertEqual(len(applied), 1)
         self.assertIn("std-test-suite: x", text)
+
+    def test_when(self):
+        # P0912R5_coroutine asserts noexcept(done()), an MSVC STL extension libc++ lacks: the exception applies there alone.
+        digest = sts.sha256(self.TEXT.encode())
+        mapping = self.mapping(assertion=[{"file": "f.cpp", "sha256": digest, "line": "int main() {", "to": "int main() { // x", "departure": "d", "when": "stdlib=libc++"}])
+        errors = []
+        self.assertIn("std-test-suite: d", sts.rewrite(self.TEXT, "f.cpp", digest, mapping, errors, config=CLANG)[0])
+        self.assertNotIn("std-test-suite: d", sts.rewrite(self.TEXT, "f.cpp", digest, mapping, errors, config=GCC)[0])
+        self.assertEqual(errors, [])
+        # An exception that does not apply is still held to the file.
+        stale = self.mapping(assertion=[{**mapping.assertion[0], "line": "gone();"}])
+        sts.rewrite(self.TEXT, "f.cpp", digest, stale, errors, config=GCC)
+        self.assertEqual(errors, ["f.cpp: no line reads 'gone();'"])
+
+    def test_load_checks_when(self):
+        self.assertEqual(self.load('[[libcxx.expect]]\nfile = "f"\nsha256 = "0"\nfails = "compile"\nparagraph = "p"\nwhen = "stdlib=libc++"\n').expect[0]["when"], "stdlib=libc++")
+        with self.assertRaises(SystemExit):
+            self.load('[[libcxx.expect]]\nfile = "f"\nsha256 = "0"\nfails = "compile"\nparagraph = "p"\nwhen = "stdlib=libc++ &&"\n')
 
     def test_vanished_line(self):
         digest = sts.sha256(self.TEXT.encode())
@@ -384,6 +420,84 @@ class Registration(unittest.TestCase):
             self.assertEqual(sts.main(argv + ["--warn-stale"]), 0)
             self.assertIn("EXPECT compile", (out / "tests.cmake").read_text())
             self.assertIn("its expected failure was written against sha256", (out / "manifest.json").read_text())
+
+    def libstdcxx_run(self, root, files, mapping_text, compiler="gcc", stdlib="libstdc++"):
+        tree, out = root / "tree", root / "build" / "libstdcxx"
+        for path, text in files.items():
+            (tree / path).parent.mkdir(parents=True, exist_ok=True)
+            (tree / path).write_text(text)
+        mapping = root / "m.toml"
+        mapping.write_text(mapping_text)
+        argv = ["--suite", "libstdcxx", "--mapping", str(mapping), "--tree", str(tree), "--binary-dir", str(out), "--tag", "releases/gcc-15.2.0", "--offline"]
+        argv += ["--compiler", compiler, "--version", "15.2.0", "--stdlib", stdlib, "--std", "23", "--target", "x86_64-linux-gnu"]
+        return out, sts.main(argv)
+
+    HASH = "libstdc++-v3/testsuite/20_util/hash"
+    TAKE_HASH = f'[libstdcxx]\ntake = [{{ path = "{HASH}" }}]\nrewrite = [{{ from = "std::hash<", to = "xstd::hash<" }}]\n'
+
+    def test_support_header_beside_tests(self):
+        # chi2_q_*.cc include "chi2_quality.h" from their own directory, and call std::hash only there.
+        files = {f"{self.HASH}/chi2_quality.h": "inline auto h = std::hash<int>();\n", f"{self.HASH}/chi2_q_uniform_random.cc": '#include "chi2_quality.h"\nint main() {}\n'}
+        with tempfile.TemporaryDirectory() as root:
+            out, status = self.libstdcxx_run(pathlib.Path(root), files, self.TAKE_HASH)
+            self.assertEqual(status, 0)
+            self.assertNotIn("std_test_suite_add(", (out / "tests.cmake").read_text())
+        with tempfile.TemporaryDirectory() as root:
+            out, status = self.libstdcxx_run(pathlib.Path(root), files, self.TAKE_HASH + f'support = [{{ path = "{self.HASH}/chi2_quality.h" }}]\n')
+            self.assertEqual(status, 0)
+            self.assertIn("xstd::hash<int>()", (out / "tests" / self.HASH / "chi2_quality.h").read_text())
+            cmake = (out / "tests.cmake").read_text()
+            self.assertIn("std_test_suite_add(libstdcxx.20_util.hash.chi2_q_uniform_random ", cmake)
+            self.assertNotIn(str(out / "support"), cmake)
+
+    def test_link_options(self):
+        # 19_diagnostics/stacktrace: dg-options "-lstdc++exp" names a library, which only a link reads.
+        files = {f"{self.HASH}/stacktrace.cc": '// { dg-options "-lstdc++exp" }\nauto h = std::hash<int>();\nint main() {}\n'}
+        with tempfile.TemporaryDirectory() as root:
+            out, status = self.libstdcxx_run(pathlib.Path(root), files, self.TAKE_HASH)
+            self.assertEqual(status, 0)
+            cmake = (out / "tests.cmake").read_text()
+            self.assertIn(' LINK_OPTIONS "-lstdc++exp")', cmake)
+            self.assertNotIn(' OPTIONS "-lstdc++exp"', cmake)
+
+    def test_additional_files(self):
+        # chi2_q_document_words.cc opens the text DejaGnu copies beside it, which its own directory holds.
+        files = {f"{self.HASH}/words.cc": '// { dg-additional-files "words.txt" }\nauto h = std::hash<int>();\nint main() {}\n', f"{self.HASH}/words.txt": "a b c\n"}
+        with tempfile.TemporaryDirectory() as root:
+            out, status = self.libstdcxx_run(pathlib.Path(root), files, self.TAKE_HASH)
+            self.assertEqual(status, 0)
+            self.assertIn(f' WORKING_DIRECTORY "{(pathlib.Path(root) / "tree" / self.HASH).resolve().as_posix()}")', (out / "tests.cmake").read_text())
+
+    def expect(self, path, text, extra=""):
+        return f'[[libstdcxx.expect]]\nfile = "{path}"\nsha256 = "{sts.sha256(text.encode())}"\nfails = "compile"\nparagraph = "p"\n{extra}'
+
+    def test_expect_when(self):
+        # An expected failure that holds on one standard library alone applies there, and is held to its file everywhere.
+        text = "auto h = std::hash<int>();\nint main() {}\n"
+        files = {f"{self.HASH}/abi.cc": text}
+        mapping = self.TAKE_HASH + self.expect(f"{self.HASH}/abi.cc", text, 'when = "gcc"\n')
+        with tempfile.TemporaryDirectory() as root:
+            out, status = self.libstdcxx_run(pathlib.Path(root), files, mapping)
+            self.assertEqual(status, 0)
+            self.assertIn("EXPECT compile", (out / "tests.cmake").read_text())
+        with tempfile.TemporaryDirectory() as root:
+            out, status = self.libstdcxx_run(pathlib.Path(root), files, mapping, compiler="clang")
+            self.assertEqual(status, 0)
+            self.assertNotIn("EXPECT", (out / "tests.cmake").read_text())
+        with tempfile.TemporaryDirectory() as root:
+            _, status = self.libstdcxx_run(pathlib.Path(root), files, mapping.replace(sts.sha256(text.encode()), "0" * 64), compiler="clang")
+            self.assertEqual(status, 1)
+
+    def test_expected_failure_on_a_skipped_suite(self):
+        # libstdc++'s suite under libc++ skips every test, so an expected failure there is not stale; one no build runs is.
+        text = "auto h = std::hash<int>();\nint main() {}\n"
+        never = '// { dg-do run { target *-*-plan9* } }\n' + text
+        with tempfile.TemporaryDirectory() as root:
+            _, status = self.libstdcxx_run(pathlib.Path(root), {f"{self.HASH}/abi.cc": text}, self.TAKE_HASH + self.expect(f"{self.HASH}/abi.cc", text), compiler="clang", stdlib="libc++")
+            self.assertEqual(status, 0)
+        with tempfile.TemporaryDirectory() as root:
+            _, status = self.libstdcxx_run(pathlib.Path(root), {f"{self.HASH}/abi.cc": never}, self.TAKE_HASH + self.expect(f"{self.HASH}/abi.cc", never), compiler="clang", stdlib="libc++")
+            self.assertEqual(status, 1)
 
     def test_a_name_is_lower_case_words(self):
         with tempfile.TemporaryDirectory() as root:

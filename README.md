@@ -865,16 +865,23 @@ in TOML, kept in its own repository:
 | Key | What it holds |
 | :-- | :------------ |
 | `take` | the directories to take, each with an optional `select`, a regular expression a file must match to be taken at all |
-| `support` | support headers to rewrite as a test is, each by its `path`, for a suite that calls what the library mirrors from a helper rather than from the test itself |
+| `support` | support headers to rewrite as a test is, each by its `path`, for a suite that calls what the library mirrors from a helper rather than from the test itself: one of the suite's support headers, or a header under a taken directory that its tests include by a relative path |
 | `include` | headers prepended to every rewritten test, under a `#line 1` so diagnostics keep the suite's line numbers |
 | `rewrite` | `from` (literal) or `regex`, and `to`, applied in order: `std::vector<bool>` → `xstd::bit_vector` |
-| `expect` | files expected to fail by design, each with its `sha256`, whether it `fails` at `compile` or `run`, and the `paragraph` the library departs from |
-| `assertion` | per-line exceptions: a `line`, matched after stripping, in a `file` of a given `sha256`, replaced by `to` or dropped with `drop = true`, each naming the `departure` it stands for |
+| `expect` | files expected to fail by design, each with its `sha256`, whether it `fails` at `compile` or `run`, the `paragraph` the library departs from, and an optional `when` |
+| `assertion` | per-line exceptions: a `line`, matched after stripping, in a `file` of a given `sha256`, replaced by `to` or dropped with `drop = true`, each naming the `departure` it stands for, and an optional `when` |
 
 Top-level keys apply to every suite, and a table named after a suite, such as
 `[libcxx]`, to that suite alone. Several mapping files are merged. A key
 outside the table above, at any level, fails configuration: a misspelt
 `fail` or `paragrah` would otherwise leave an expected failure unread.
+
+A `when` is a lit expression over the features libc++'s markers read, such as
+`stdlib=libc++` or `gcc && c++23`, and its entry applies only to a build it
+holds for: the MSVC STL's `P0912R5_coroutine` asserts a `noexcept` that only
+its own `coroutine_handle` has, so that assertion fails against libc++ and
+compiles against libstdc++. An entry's hash and line are checked on every
+build, whether or not it applies, so it goes stale on every leg alike.
 
 A caller reaches the module through `FetchContent` of this repository at the
 commit its workflows pin, behind an option that is off by default:
@@ -912,8 +919,12 @@ The adapter is strict where silence would mislead:
   only the standard library's own types, and would pass on their account. A
   test that includes a rewritten support header counts as reached.
 - **A `support` entry that does nothing fails configuration:** a header the
-  tree does not have, one outside the suite's support headers, or one no
-  rewrite changes.
+  tree does not have, one under neither the suite's support headers nor a
+  taken directory, or one no rewrite changes.
+- **An expected failure the suite never runs fails configuration.** One this
+  build skips is excused only where the suite's markers would run it on
+  another standard library's build of the same dialect, as libstdc++'s suite
+  does under libstdc++ but not libc++, so one mapping serves every leg.
 - **Every file under a taken directory is in `manifest.json`**, beside the
   generated `tests.cmake`, with its hash and what became of it: built, run,
   expected to fail, or skipped and why. A caller can hold its own
@@ -929,13 +940,22 @@ path, as a test does, and the manifest lists it with its hash. libc++'s
 stay with the original: a test that reaches the header only through another
 header, which still counts as no rewrite reaching it, and an original support
 header that includes it in quotes, which finds its sibling first. Map that
-header too where either matters.
+header too where either matters. A header under a taken directory, such as
+libstdc++'s `20_util/hash/chi2_quality.h`, which the `chi2_q_*.cc` tests
+include in quotes, is copied beside the rewritten tests instead, where their
+quoted include looks first.
 
-Tests of diagnostics, libc++'s `.verify.cpp` and libstdc++'s `dg-error`, are a
-second pass, and are skipped for now with that reason. So is a test whose
-markers this adapter does not interpret: custom `RUN` lines, a lit
-substitution, an unknown `dg-add-options`. Each lands in the manifest as a
-skip with a reason, never as a pass.
+Tests of diagnostics build and must report every error their markers name:
+libc++'s `.verify.cpp` under Clang's `-verify`, and libstdc++'s `dg-error`
+lines matched against GCC's output; on another compiler each is skipped. A
+marker's `-l` and `-Wl,` options go to the link, the rest to the compile. The
+MSVC STL's copies of libc++'s tests, which include `msvc_stdlib_force_include.h`
+from the STL's LLVM submodule, are skipped with that reason, and a test of its
+own that includes `<stacktrace>` links `-lstdc++exp` where libstdc++ keeps
+`std::stacktrace` there, as 14 and 15 do. A test whose markers this adapter does
+not interpret is skipped too: custom `RUN` lines, a lit substitution, an unknown
+`dg-add-options`. Each lands in the manifest as a skip with a reason, never as
+a pass.
 
 ## Future directions
 
