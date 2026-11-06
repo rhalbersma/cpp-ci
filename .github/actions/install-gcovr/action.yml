@@ -17,7 +17,7 @@ runs:
     - shell: bash
       run: |
         set -euo pipefail
-        sudo apt-get install -y python3-pip
+        sudo timeout --kill-after=30s 20m apt-get install -y python3-pip
         python3 -m pip install --user --require-hashes \
           -r "$GITHUB_ACTION_PATH/requirements.txt"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
