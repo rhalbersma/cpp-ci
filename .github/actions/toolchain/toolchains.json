@@ -4,7 +4,7 @@
       "label": "15",
       "version": "15",
       "trunk": "false",
-      "test_suite": "releases/gcc-15.2.0"
+      "test_suite": "releases/gcc-15.3.0"
     },
     "qualification": {
       "label": "16",
