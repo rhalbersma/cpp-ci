@@ -970,7 +970,7 @@ in TOML, kept in its own repository:
 | :-- | :------------ |
 | `take` | the directories to take, each with an optional `select`, a regular expression a file must match to be taken at all |
 | `support` | support headers to rewrite as a test is, each by its `path`, for a suite that calls what the library mirrors from a helper rather than from the test itself: one of the suite's support headers, or a header under a taken directory that its tests include by a relative path |
-| `include` | headers prepended to every rewritten test, under a `#line 1` so diagnostics keep the suite's line numbers |
+| `include` | headers each rewritten test includes after the macros it defines before its first header, under a `#line` so diagnostics keep the suite's line numbers |
 | `rewrite` | `from` (literal) or `regex`, and `to`, applied in order: `std::vector<bool>` → `xstd::bit_vector` |
 | `expect` | files expected to fail by design, each with its `sha256`, whether it `fails` at `compile` or `run`, the `paragraph` the library departs from, and an optional `when` |
 | `assertion` | per-line exceptions: a `line`, matched after stripping, in a `file` of a given `sha256`, replaced by `to` or dropped with `drop = true`, each naming the `departure` it stands for, and an optional `when` |
@@ -1054,8 +1054,9 @@ libc++'s `.verify.cpp` under Clang's `-verify`, and libstdc++'s `dg-error`
 lines matched against GCC's output; on another compiler each is skipped. A
 marker's `-l` and `-Wl,` options go to the link, the rest to the compile. The
 MSVC STL's copies of libc++'s tests, which include `msvc_stdlib_force_include.h`
-from the STL's LLVM submodule, are skipped with that reason, and a test of its
-own that includes `<stacktrace>` links `-lstdc++exp` where libstdc++ keeps
+from the STL's LLVM submodule, are skipped with that reason, as is, off MSVC, a
+death test, which `test_death.hpp` runs through the MSVC runtime's `<crtdbg.h>`;
+a test of its own that includes `<stacktrace>` links `-lstdc++exp` where libstdc++ keeps
 `std::stacktrace` there, as 14 and 15 do. A libstdc++ test that names
 `dg-additional-files` runs in a directory of its own in the build tree, holding
 copies of those files from `testsuite/data/`, as DejaGnu's run directory would.

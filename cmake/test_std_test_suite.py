@@ -212,6 +212,18 @@ class Msvc(unittest.TestCase):
             self.assertEqual(kind, "skip")
             self.assertIn("msvc_stdlib_force_include.h", reason)
 
+    def test_death_test(self):
+        # GH_005090_stl_hardening: death tests through <crtdbg.h>, which only the MSVC runtime has.
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            (root / "tests" / "GH_2").mkdir(parents=True)
+            (root / "tests" / "GH_2" / "env.lst").write_text('PM_CL="/EHsc /std:c++latest"\n')
+            text = '#include <test_death.hpp>\n'
+            kind, reason, _, _ = sts.msvc_classify("tests/GH_2/test.cpp", text, GCC, root)
+            self.assertEqual(kind, "skip")
+            self.assertIn("crtdbg.h", reason)
+            self.assertEqual(sts.msvc_classify("tests/GH_2/test.cpp", text, MSVC, root)[0], "run")
+
     def test_stacktrace_link(self):
         # P0881R7_stacktrace: libstdc++ before 16 keeps std::stacktrace in libstdc++exp.
         with tempfile.TemporaryDirectory() as root:
@@ -245,6 +257,17 @@ class Mapping(unittest.TestCase):
         self.assertIn("xstd::bit_vector v;", text)
         self.assertEqual(len(applied), 1)
         self.assertTrue(touched)
+
+    def test_prelude_follows_configuration_macros(self):
+        text = "// Copyright\n\n#define _HAS_DEPRECATED_ADAPTOR_TYPEDEFS 1\n#define _SILENCE_X\n\n#include <vector>\nint main() {}\n"
+        mapping = self.mapping(include=["xstd/bits/bit_vector.hpp"])
+        out, _, _ = sts.rewrite(text, "f.cpp", sts.sha256(text.encode()), mapping, [])
+        self.assertEqual(out, "// Copyright\n\n#define _HAS_DEPRECATED_ADAPTOR_TYPEDEFS 1\n#define _SILENCE_X\n#include <xstd/bits/bit_vector.hpp>\n#line 5\n\n#include <vector>\nint main() {}\n")
+
+    def test_prelude_leads_without_configuration_macros(self):
+        text = "// Copyright\n#include <vector>\n#define LOCAL 1\n"
+        out, _, _ = sts.rewrite(text, "f.cpp", sts.sha256(text.encode()), self.mapping(include=["h.hpp"]), [])
+        self.assertTrue(out.startswith("#include <h.hpp>\n#line 1\n// Copyright\n"))
 
     def test_stale_hash(self):
         mapping = self.mapping(assertion=[{"file": "f.cpp", "sha256": "0" * 64, "line": "int main() {", "drop": True, "departure": "x"}])
