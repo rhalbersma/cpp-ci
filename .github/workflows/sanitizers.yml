@@ -176,76 +176,15 @@ jobs:
           build_types: Debug
           reduce_on_pr: ${{ inputs.reduce_on_pr }}
 
+      # The legs and their crossing with the rungs live in the sanitizer-legs
+      # action, the one table this workflow and a developer's local run share;
+      # its script says why each leg is there.
       - id: cross
-        shell: bash
-        env:
-          GCC_RUNGS: ${{ steps.gcc.outputs.matrix }}
-          CLANG_RUNGS: ${{ steps.clang.outputs.matrix }}
-          LIBCXX_RUNGS: ${{ steps.libcxx.outputs.matrix }}
-        run: |
-          set -euo pipefail
-
-          # A skipped step has no outputs, so the empty case arrives as the
-          # empty string rather than as JSON. No rungs means the libc++ leg
-          # crosses with nothing and drops out below.
-          libcxx_rungs="${LIBCXX_RUNGS:-}"
-          if [ -z "$libcxx_rungs" ]; then
-            libcxx_rungs='{"include":[]}'
-            echo "::notice::libcxx_tiers is empty, dropping the ASan libc++ leg"
-          fi
-
-          # Leak detection deliberately left on. A library that allocates
-          # nothing has nothing to report, and the repositories that do
-          # allocate are the ones that leg exists for.
-          #
-          # ASan runs against both standard libraries. Its detection is a
-          # shared runtime, so a second compiler alone would re-run one check
-          # -- but the container-overflow annotations are not shared: libc++
-          # instruments vector, string and deque, libstdc++ annotates vector
-          # alone and only under _GLIBCXX_SANITIZE_VECTOR.
-          #
-          # UBSan twice over, because the two implementations do not check the
-          # same set and a clean run under one says nothing about the other.
-          #
-          # implicit-conversion is Clang's alone -- g++ rejects the group --
-          # and catches the value-dependent truncations and sign changes that
-          # -Wconversion can only diagnose where it proves them statically.
-          #
-          # No -g among the flags: every leg builds Debug, so the debug level
-          # a symbolized report reads is CMAKE_CXX_FLAGS_DEBUG, which is
-          # debug_flags. A -g here would come first on the line and lose.
-          legs='[
-            {"id":"asan","name":"ASan + LSan","compiler":"GCC","family":"gcc",
-             "flags":"-fsanitize=address -fno-omit-frame-pointer",
-             "options":"ASAN_OPTIONS=detect_leaks=1"},
-            {"id":"asan-libcxx","name":"ASan + LSan","compiler":"Clang libc++","family":"clang","libcxx":true,
-             "flags":"-fsanitize=address -fno-omit-frame-pointer -stdlib=libc++",
-             "options":"ASAN_OPTIONS=detect_leaks=1"},
-            {"id":"ubsan-gcc","name":"UBSan","compiler":"GCC","family":"gcc",
-             "flags":"-fsanitize=undefined -fno-sanitize-recover=undefined",
-             "options":"UBSAN_OPTIONS=print_stacktrace=1"},
-            {"id":"ubsan-clang","name":"UBSan","compiler":"Clang","family":"clang",
-             "flags":"-fsanitize=undefined -fno-sanitize-recover=undefined",
-             "options":"UBSAN_OPTIONS=print_stacktrace=1"},
-            {"id":"implicit-conversion","name":"Implicit conversion","compiler":"Clang","family":"clang",
-             "ignore_foreign_code":true,
-             "flags":"-fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion",
-             "options":"UBSAN_OPTIONS=print_stacktrace=1"}
-          ]'
-
-          matrix=$(jq -c -n \
-            --argjson legs "$legs" \
-            --argjson gcc "$GCC_RUNGS" \
-            --argjson clang "$CLANG_RUNGS" \
-            --argjson libcxx "$libcxx_rungs" \
-            '{include: [ $legs[] as $leg
-               | (if $leg.family == "gcc" then $gcc
-                  elif $leg.libcxx then $libcxx
-                  else $clang end).include[] as $rung
-               | $leg + $rung ]}')
-
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          jq -r '.include | "\(length) legs:", (.[] | "  \(.name) / \(.compiler) \(.label)")' <<< "$matrix"
+        uses: rhalbersma/cpp-ci/.github/actions/sanitizer-legs@d0f1d295d59167c75530aa657dc5f77e56545b16
+        with:
+          gcc_rungs: ${{ steps.gcc.outputs.matrix }}
+          clang_rungs: ${{ steps.clang.outputs.matrix }}
+          libcxx_rungs: ${{ steps.libcxx.outputs.matrix }}
 
   build:
     name: ${{ matrix.name }} / ${{ matrix.compiler }} ${{ matrix.label }}
