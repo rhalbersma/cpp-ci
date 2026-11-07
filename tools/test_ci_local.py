@@ -85,6 +85,7 @@ class Fixture(unittest.TestCase):
 
     workflows = WORKFLOWS
     manifest = True
+    deps = "vcpkg"
 
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -99,7 +100,8 @@ class Fixture(unittest.TestCase):
             (self.caller / "test/consumer" / model).mkdir(parents=True)
             (self.caller / "test/consumer" / model / "CMakeLists.txt").write_text("project(demo)\n")
         self.out = self.caller / "build/ci-local"
-        self.ctx = ci_local.Context(self.caller, self.out, vcpkg_root=pathlib.Path("/vcpkg"), jobs=4, table=TABLE)
+        self.ctx = ci_local.Context(self.caller, self.out, vcpkg_root=pathlib.Path("/vcpkg"), jobs=4, table=TABLE,
+                                    deps=self.deps, boost_prefix=pathlib.Path("/usr/local"))
         self.legs = ci_local.discover(self.ctx)
 
     def leg(self, name):
@@ -397,6 +399,106 @@ class ConsumptionThroughVcpkg(Fixture):
         find_package = next(step for step in steps if step.argv[2:3] == [str(self.caller / "test/consumer/find_package")])
         self.assertIn(f"-DCMAKE_PREFIX_PATH={root}/install-prefix;{root}/deps-prefix;{root}/vcpkg_installed/x64-linux-gcc",
                       find_package.argv)
+
+
+class SystemDeps(Fixture):
+    deps = "system"
+
+    def boost_test(self, name):
+        return [step for step in self.leg(name).steps if step.argv[1:2] == [f"{ci_local.CPP_CI}/tools/boost-test.sh"]]
+
+    def test_no_leg_passes_vcpkg(self):
+        for leg in self.legs:
+            for step in leg.steps:
+                self.assertNotEqual(pathlib.Path(step.argv[0]).name, "vcpkg", leg.name)
+                self.assertFalse(any(arg.startswith(("-DCMAKE_TOOLCHAIN_FILE", "-DVCPKG_")) for arg in step.argv), leg.name)
+                self.assertFalse(any(key.startswith("VCPKG_") for key in step.env), leg.name)
+
+    def test_dependencies_come_from_the_prefix(self):
+        self.assertIn("-DCMAKE_PREFIX_PATH=/usr/local", self.configure("gcc-15").argv)
+        self.assertIn("-DCMAKE_PREFIX_PATH=/usr/local", self.configure("clang-tidy-22").argv)
+        self.assertIn("-DCMAKE_PREFIX_PATH=/usr/local", self.configure("coverage").argv)
+
+    def test_an_x86_leg_looks_in_the_m32_prefix_first(self):
+        self.assertIn("-DCMAKE_PREFIX_PATH=/usr/local/i686;/usr/local", self.configure("i686-15").argv)
+
+    def test_libcxx_trunk_and_x86_build_their_own_boost_test(self):
+        expected = {
+            "clang-libcxx-22": ("clang++-22", ["-stdlib=libc++"]),
+            "gcc-17-svn": ("g++-17", []),
+            "clang-24-svn": ("clang++-24", ["--gcc-toolchain=/opt/gcc-latest"]),
+            "i686-15": ("g++-15", ["-m32"]),
+            "asan-libcxx-22": ("clang++-22", ["-stdlib=libc++"]),
+        }
+        for name, (cxx, flags) in expected.items():
+            package = self.out / f"boost-test-{name}"
+            steps = self.boost_test(name)
+            self.assertEqual([step.argv for step in steps], [["bash", f"{ci_local.CPP_CI}/tools/boost-test.sh", str(package), cxx, *flags]])
+            self.assertIs(self.leg(name).steps[0], steps[0], name)
+            self.assertIn(f"-Dboost_unit_test_framework_DIR={package}", self.configure(name).argv)
+            self.assertIn("its own Boost.Test", self.leg(name).what)
+
+    def test_stable_and_qualification_link_the_installed_boost_test(self):
+        for name in ("gcc-15", "clang-22", "gcc-bmi2-15", "clang-bmi2-22", "gcc-16", "clang-23", "clang-tidy-24-svn",
+                     "coverage", "asan-15", "ubsan-gcc-15", "ubsan-clang-22", "implicit-conversion-22"):
+            self.assertEqual(self.boost_test(name), [], name)
+            self.assertFalse(any("boost_unit_test_framework_DIR" in arg for arg in self.configure(name).argv), name)
+
+    def test_the_rule_reads_the_rung_not_the_name(self):
+        self.assertIsNone(ci_local.boost_test_flags("gcc", TABLE["gcc"]["qualification"]))
+        self.assertEqual(ci_local.boost_test_flags("gcc", TABLE["gcc"]["development"]), [])
+        self.assertEqual(ci_local.boost_test_flags("gcc", TABLE["gcc"]["development"], "x86"), ["-m32"])
+        self.assertIsNone(ci_local.boost_test_flags("clang", TABLE["clang"]["qualification"]))
+        self.assertEqual(ci_local.boost_test_flags("clang", TABLE["clang"]["stable"] | {"libcxx": True}), ["-stdlib=libc++"])
+
+    def test_a_prefix_elsewhere_reaches_boost_test(self):
+        ctx = ci_local.Context(self.caller, self.out, jobs=4, table=TABLE, deps="system", boost_prefix=pathlib.Path("/opt/boost"))
+        legs = {leg.name: leg for leg in ci_local.discover(ctx)}
+        self.assertEqual(legs["clang-libcxx-22"].steps[0].argv[-3:], ["-stdlib=libc++", "-isystem", "/opt/boost/include"])
+        self.assertIn("-DCMAKE_PREFIX_PATH=/opt/boost", legs["gcc-15"].steps[0].argv)
+
+    def test_the_ignorelist_names_the_prefix(self):
+        self.assertEqual(self.leg("implicit-conversion-22").steps[0].argv[-1], "src:*/usr/local/include/*")
+
+    def test_listing_and_dry_run_show_the_mode(self):
+        self.assertIn("dependencies: --deps system, installed in /usr/local", ci_local.listing(self.ctx, self.legs))
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            ci_local.main(["--caller", str(self.caller), "--deps", "system", "--dry-run", "gcc-15"])
+        self.assertIn("# dependencies: --deps system", stream.getvalue())
+        self.assertNotIn("VCPKG", stream.getvalue())
+
+
+class SystemConsumption(Fixture):
+    deps = "system"
+    workflows = ConsumptionThroughVcpkg.workflows
+
+    def test_vcpkg_true_builds_against_the_installed_packages(self):
+        root = self.out / "consumption"
+        steps = self.leg("consumption").steps
+        self.assertFalse(any(step.argv[1:2] == ["install"] and "vcpkg" in step.argv[0] for step in steps))
+        library = next(step for step in steps if step.argv[2:3] == [str(self.caller)])
+        self.assertIn(f"-DCMAKE_PREFIX_PATH={root}/deps-prefix;/usr/local", library.argv)
+        self.assertFalse(any("VCPKG" in arg for arg in library.argv))
+        find_package = next(step for step in steps if step.argv[2:3] == [str(self.caller / "test/consumer/find_package")])
+        self.assertIn(f"-DCMAKE_PREFIX_PATH={root}/install-prefix;{root}/deps-prefix;/usr/local", find_package.argv)
+        self.assertIn("against /usr/local", self.leg("consumption").what)
+
+
+class DepsMode(unittest.TestCase):
+    def test_vcpkg_by_default(self):
+        self.assertEqual(ci_local.deps_mode(None, {}), "vcpkg")
+
+    def test_the_environment_sets_it(self):
+        self.assertEqual(ci_local.deps_mode(None, {"CI_LOCAL_DEPS": "system"}), "system")
+
+    def test_the_flag_wins(self):
+        self.assertEqual(ci_local.deps_mode("vcpkg", {"CI_LOCAL_DEPS": "system"}), "vcpkg")
+        self.assertEqual(ci_local.deps_mode("system", {"CI_LOCAL_DEPS": "vcpkg"}), "system")
+
+    def test_an_unknown_value_is_an_error(self):
+        with self.assertRaises(SystemExit):
+            ci_local.deps_mode(None, {"CI_LOCAL_DEPS": "conan"})
 
 
 class SharedNames(Fixture):

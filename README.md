@@ -820,6 +820,7 @@ its own workflows pin, so a local build and CI cannot disagree about versions:
 tools/setup-toolchain.sh                                   # every rung
 tools/setup-toolchain.sh --stable                          # the stable rungs alone
 tools/setup-toolchain.sh --requirements tools/cmake-requirements.txt
+tools/setup-toolchain.sh --stable --boost hash2,test,unordered  # and Boost's libraries
 ```
 
 `--requirements` adds a caller's own hash-pinned requirements, such as the
@@ -829,6 +830,30 @@ libc++ leg a runner of its own. Apt sources are written as files rather than
 through `add-apt-repository`, which needs the system Python's `apt_pkg`.
 `self-check.yml` runs it on a fresh runner in both modes, twice, and builds a
 program with every compiler it installed.
+
+`--boost` is for a machine whose network refuses the source archives vcpkg's
+Boost ports download from `github.com` and `codeload.github.com`, though it
+serves release assets, as a sandboxed cloud session's does. It names Boost
+libraries by the names Boost's CMake build takes, comma-separated or repeated,
+and builds them from Boost's CMake release tarball, at the release vcpkg's
+pinned commit resolves and checked against the SHA-256 Boost publishes, with
+the stable GCC into `BOOST_PREFIX`, or else `/usr/local`. Outside `--stable`,
+where the stable GCC's multilib is installed, it builds them again at `-m32`
+into `<prefix>/i686`, for an i686 leg whose library links a compiled Boost
+library such as Boost.Container. A rerun builds nothing while every library
+named has its CMake package at that release in the prefix, Boost.Test's being
+`boost_unit_test_framework`.
+
+[`tools/boost-test.sh`](tools/boost-test.sh) builds Boost.Test's framework from
+the installed headers with another compiler, standard library or target, and
+writes it as a CMake package, since the stable GCC's Boost.Test fails to link
+or to run under libc++, the trunk snapshot's libstdc++ or `-m32`. It prints
+the `-D` that finds the package:
+
+```sh
+tools/boost-test.sh build/boost-test clang++-22 -stdlib=libc++
+# -Dboost_unit_test_framework_DIR=<absolute path to build/boost-test>
+```
 
 ## Running a caller's Linux legs locally
 
@@ -852,6 +877,7 @@ tools/ci_local.py --caller ../xstd-ints --stable        # the stable tier's legs
 tools/ci_local.py --caller ../xstd-ints 'gcc-*' format  # the legs named or matched, in the order given
 tools/ci_local.py --caller ../xstd-ints --keep-going    # every leg, whatever fails
 tools/ci_local.py --caller ../xstd-ints --dry-run gcc-15  # the commands, without running them
+tools/ci_local.py --caller ../xstd-ints --deps system   # against what is installed, not through vcpkg
 ```
 
 Legs run cheapest first: actionlint and format, the suite legs at the stable
@@ -897,7 +923,22 @@ Where a local run differs from CI's, and why:
   in `VCPKG_ROOT`, or else `~/.local/share/cpp-ci/vcpkg`, where
   `setup-toolchain.sh` checks out the pinned commit. Its ports download from
   `github.com` and `codeload.github.com`, which a sandboxed machine must be able
-  to reach.
+  to reach, or else run with `--deps system`.
+- **`--deps system` for a sandboxed machine.** `--deps`, or `CI_LOCAL_DEPS`
+  where the flag is not given, picks where a caller's `vcpkg.json`
+  dependencies come from: `vcpkg`, the default, builds them as CI does, and
+  `system` takes what `setup-toolchain.sh --boost` installed. No leg then
+  passes vcpkg's toolchain, triplet, overlay or features, and each finds its
+  dependencies in `BOOST_PREFIX`, or else `/usr/local`, an x86 leg in
+  `<prefix>/i686` first. A leg whose standard library or target differs from
+  the stable GCC's, read from its rung and its stub rather than its name, first
+  builds a Boost.Test of its own with `boost-test.sh` into
+  `<out>/boost-test-<leg>`, and a failed build fails the leg: libc++, a GCC on
+  the trunk snapshot, a Clang whose rung pairs it with the trunk libstdc++, and
+  `arch: x86`. The qualification tier's libstdc++ links the installed one. A
+  consumption stub with `vcpkg: true` builds against the installed packages,
+  and the implicit-conversion leg's ignorelist names `<prefix>/include` as
+  foreign code. `--list` and `--dry-run` name the mode.
 - **Parallelism by memory everywhere.** Every build runs as many jobs as
   available memory holds at `build_memory_mib` each, coverage's included, and
   `reduce_on_pr` never applies: a local run is a push.

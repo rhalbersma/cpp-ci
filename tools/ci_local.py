@@ -6,7 +6,8 @@
 
 """Run a caller's Linux CI legs locally, derived from the caller's own workflow stubs.
 
-    ci_local.py [--caller DIR] [--out DIR] [--list] [--dry-run] [--keep-going] [--stable] [LEG_OR_GLOB ...]
+    ci_local.py [--caller DIR] [--out DIR] [--deps {vcpkg,system}] [--list] [--dry-run] [--keep-going] [--stable]
+                [LEG_OR_GLOB ...]
 
 The stubs are the single source. Every job in the caller's .github/workflows/*.yml whose uses: names
 rhalbersma/cpp-ci/.github/workflows/<name>.yml@<sha> is a leg source: its with: inputs override that shared
@@ -36,6 +37,16 @@ clang-tidy, coverage, the sanitizers, then consumption. The run stops at the fir
 and ends with one line per leg. Each leg builds in <out>/<leg> and logs to <out>/<leg>.log, and a second run reuses
 the build tree, as an incremental build; delete it for a clean one.
 
+--deps picks where a caller's vcpkg.json dependencies come from, CI_LOCAL_DEPS where the flag is not given. vcpkg, the
+default, builds them as CI does. system takes what is installed, for a machine whose network refuses the source
+archives vcpkg's Boost ports download: no leg passes vcpkg's toolchain, triplet, overlay or features, or its
+environment, and each finds its dependencies in BOOST_PREFIX, else /usr/local, where tools/setup-toolchain.sh --boost
+builds Boost with the stable GCC; an x86 leg looks in <prefix>/i686 first, where it builds Boost again at -m32. A leg
+whose standard library or target differs from the stable GCC's, through libc++, a trunk libstdc++ or -m32, first
+builds a Boost.Test of its own with tools/boost-test.sh into <out>/boost-test-<leg> and links that; a failed build
+fails the leg. The qualification tier's libstdc++ links the installed one. A consumption stub with vcpkg: true builds
+against the installed packages, and the implicit-conversion ignorelist names <prefix>/include as foreign code.
+
 What differs from CI, and why:
 
 - The libc++ legs run at the stable rung alone. Apt's libc++ packages exclude one another, so a machine holds one, and
@@ -44,10 +55,11 @@ What differs from CI, and why:
   GCC it finds. A Clang rung whose cxxflags are empty is pinned to its own libstdc++ with --gcc-install-dir, in the
   project's flags and in VCPKG_CLANG_FLAGS; the clang-tidy legs pin the gcc_tier's. clang-tidy's header pass runs
   outside the compile database, so there it still sees the newest libstdc++.
-- vcpkg installs from the CMake toolchain's manifest install into the leg's own tree, never into the caller's
-  checkout, against vcpkg's default binary cache (VCPKG_DEFAULT_BINARY_CACHE, else ~/.cache/vcpkg/archives), which
-  every leg and every caller share; the ABI hash in each archive's name keeps compilers apart. vcpkg is the one in
-  VCPKG_ROOT, else ~/.local/share/cpp-ci/vcpkg, where tools/setup-toolchain.sh checks out the pinned commit.
+- With --deps vcpkg, vcpkg installs from the CMake toolchain's manifest install into the leg's own tree, never into
+  the caller's checkout, against vcpkg's default binary cache (VCPKG_DEFAULT_BINARY_CACHE, else
+  ~/.cache/vcpkg/archives), which every leg and every caller share; the ABI hash in each archive's name keeps compilers
+  apart. vcpkg is the one in VCPKG_ROOT, else ~/.local/share/cpp-ci/vcpkg, where tools/setup-toolchain.sh checks out
+  the pinned commit.
 - Every build runs as many jobs as available memory holds at build_memory_mib each, coverage's included, and a pull
   request's reduce_on_pr never applies: a local run is a push.
 """
@@ -79,6 +91,8 @@ SUITES = {"gcc": "gcc", "clang": "clang", "clang-libc++": "libcxx"}
 SINGLE = {"actionlint": "actionlint", "clang-format": "format", "coverage": "coverage", "consumption": "consumption"}
 MODELS = ("find_package", "add_subdirectory", "fetch_content")
 BINARY_SOURCES = "clear;default,readwrite"
+DEPS = ("vcpkg", "system")
+DEFAULT_PREFIX = "/usr/local"
 
 # Run order: the cheapest checks first, so a slip fails in seconds rather than after an hour of compiling. A leg's
 # order is (group, tier, place within the group, stub file, stub position).
@@ -123,7 +137,8 @@ class Leg:
 
 @dataclasses.dataclass
 class Context:
-    """What every leg is built from: the caller, where legs build, this checkout, vcpkg and the build parallelism."""
+    """What every leg is built from: the caller, where legs build, this checkout, vcpkg, the build parallelism, the
+    toolchain table, and whether dependencies come from vcpkg or from what is installed in boost_prefix."""
 
     caller: Path
     out: Path
@@ -131,6 +146,8 @@ class Context:
     vcpkg_root: Path = Path(os.environ.get("VCPKG_ROOT") or Path.home() / ".local/share/cpp-ci/vcpkg")
     jobs: int | None = None
     table: dict | None = None
+    deps: str = "vcpkg"
+    boost_prefix: Path = Path(os.environ.get("BOOST_PREFIX") or DEFAULT_PREFIX)
 
     def __post_init__(self):
         if self.table is None:
@@ -147,6 +164,13 @@ class Context:
 
     def script(self, action):
         return str(self.cpp_ci / f".github/actions/{action}/{action}.sh")
+
+    def system(self):
+        return self.deps == "system"
+
+    def prefixes(self, arch="x64"):
+        """Where a leg finds installed dependencies: the prefix, and for an x86 leg its -m32 copy first."""
+        return f"{self.boost_prefix}/i686;{self.boost_prefix}" if arch == "x86" else str(self.boost_prefix)
 
 
 def build_jobs(memory_mib, meminfo="/proc/meminfo"):
@@ -238,12 +262,49 @@ def features_arg(features):
     return [f"-DVCPKG_MANIFEST_FEATURES={names}"] if names else []
 
 
-def vcpkg_args(ctx, source, triplet, features, overlay=True):
-    """The vcpkg toolchain arguments, where the source has a manifest: toolchain file, triplet, features, overlay."""
+def vcpkg_args(ctx, source, triplet, features, overlay=True, arch="x64"):
+    """The dependency arguments, where the source has a manifest: vcpkg's toolchain file, triplet, features and overlay,
+    or under --deps system the installed prefixes alone."""
     if not (source / "vcpkg.json").is_file():
         return []
+    if ctx.system():
+        return [f"-DCMAKE_PREFIX_PATH={ctx.prefixes(arch)}"]
     args = [f"-DCMAKE_TOOLCHAIN_FILE={ctx.toolchain_file()}", f"-DVCPKG_TARGET_TRIPLET={triplet}", *features_arg(features)]
     return args + ([f"-DVCPKG_OVERLAY_TRIPLETS={ctx.overlay()}"] if overlay else [])
+
+
+def boost_test_flags(family, entry, arch="x64"):
+    """The flags choosing a leg's standard library or target where these differ from the stable GCC's, whose Boost.Test
+    --deps system finds installed: libc++, a trunk libstdc++ or -m32. None where the installed one links."""
+    if family == "libcxx" or entry.get("libcxx") is True:
+        flags = ["-stdlib=libc++"]
+    elif family == "gcc" and truthy(entry.get("trunk")):
+        flags = []
+    elif family == "clang" and truthy(entry.get("gcc_trunk")):
+        flags = clang_flags(entry).split()
+    elif arch == "x86":
+        flags = []
+    else:
+        return None
+    return flags + (["-m32"] if arch == "x86" else [])
+
+
+def boost_test(ctx, source, name, cxx, flags):
+    """Under --deps system, where flags is not None: the step building the leg's own Boost.Test, and the -D finding it.
+    Nothing otherwise, or where the source has no manifest to need it."""
+    if not ctx.system() or flags is None or not (source / "vcpkg.json").is_file():
+        return [], []
+    package = ctx.out / f"boost-test-{name}"
+    search = [] if str(ctx.boost_prefix) == DEFAULT_PREFIX else ["-isystem", f"{ctx.boost_prefix}/include"]
+    step = Step(["bash", str(ctx.cpp_ci / "tools/boost-test.sh"), str(package), cxx, *flags, *search])
+    return [step], [f"-Dboost_unit_test_framework_DIR={package}"]
+
+
+def deps_shown(ctx, triplet, own_boost_test):
+    """Where a leg's dependencies come from, for its description: the triplet, or the installed prefix."""
+    if not ctx.system():
+        return triplet
+    return f"installed in {ctx.boost_prefix}" + (", its own Boost.Test" if own_boost_test else "")
 
 
 def tail_args(given):
@@ -307,15 +368,18 @@ def suite_legs(ctx, stub, given, family, position):
             flags = [f"-DCMAKE_CXX_FLAGS=-stdlib=libc++ {given['cxx_flags']}"]
             env["VCPKG_CLANG_VERSION"] = version
         extra = " ".join(part for part in (given["cxx_flags"], given["cmake_args"]) if part)
-        leg = Leg(name, order, tier, f"{file}/{job_id}: {cxx} {btype}{' ' + extra if extra else ''}, {triplet}", stub=stub)
-        if family == "libcxx" and tier != "stable":
+        local = not (family == "libcxx" and tier != "stable")
+        prepare, found = boost_test(ctx, ctx.caller, name, cxx, boost_test_flags(family, entry, arch)) if local else ([], [])
+        what = f"{file}/{job_id}: {cxx} {btype}{' ' + extra if extra else ''}, {deps_shown(ctx, triplet, prepare)}"
+        leg = Leg(name, order, tier, what, stub=stub)
+        if not local:
             leg.skip = "libc++ runs at the stable rung locally: apt's libc++ packages exclude one another; CI runs this rung"
             leg.order = (SKIPPED, 0, 0, file, position)
         else:
             configure = ["cmake", "-S", str(ctx.caller), "-B", str(build), "-G", given["generator"],
                          f"-DCMAKE_BUILD_TYPE={btype}", f"-DCMAKE_C_COMPILER={cc}", f"-DCMAKE_CXX_COMPILER={cxx}", *flags,
-                         *vcpkg_args(ctx, ctx.caller, triplet, given["vcpkg_features"]), *tail_args(given)]
-            leg.steps = [Step(configure, env), *build_and_test(ctx, build, given, env)]
+                         *vcpkg_args(ctx, ctx.caller, triplet, given["vcpkg_features"], arch=arch), *found, *tail_args(given)]
+            leg.steps = [*prepare, Step(configure, env), *build_and_test(ctx, build, given, env)]
         legs.append(leg)
     return legs
 
@@ -452,19 +516,22 @@ def sanitizer_legs(ctx, stub, given, position):
             else:
                 triplet, rung_flags = given["vcpkg_clang_triplet"], clang_flags(entry)
                 env["VCPKG_CLANG_FLAGS"] = rung_flags
-        steps = []
+        steps, found = boost_test(ctx, ctx.caller, name, cxx, boost_test_flags("libcxx" if is_libcxx else entry["family"], entry))
+        if steps:
+            leg.what += ", its own Boost.Test"
         ignorelist = ""
         if entry.get("ignore_foreign_code"):
             ignorelist_file = build / "sanitizer-ignorelist.txt"
             ignorelist = f"-fsanitize-ignorelist={ignorelist_file}"
+            installed = [f"src:*{ctx.boost_prefix}/include/*"] if ctx.system() else []
             steps.append(Step(["bash", "-c", 'mkdir -p "${1%/*}" && printf "%s\\n" "${@:2}" > "$1"', "ignorelist",
-                               str(ignorelist_file), *IGNORELIST]))
+                               str(ignorelist_file), *IGNORELIST, *installed]))
         sanitizer_flags = f"{entry['flags']} {rung_flags}"
         configure = ["cmake", "-S", str(ctx.caller), "-B", str(build), "-G", given["generator"], "-DCMAKE_BUILD_TYPE=Debug",
                      f"-DCMAKE_C_COMPILER={cc}", f"-DCMAKE_CXX_COMPILER={cxx}",
                      f"-DCMAKE_CXX_FLAGS={sanitizer_flags} {ignorelist} {given['cxx_flags']}",
                      f"-DCMAKE_EXE_LINKER_FLAGS={sanitizer_flags}",
-                     *vcpkg_args(ctx, ctx.caller, triplet, given["vcpkg_features"]), *tail_args(given)]
+                     *vcpkg_args(ctx, ctx.caller, triplet, given["vcpkg_features"]), *found, *tail_args(given)]
         options = dict(option.split("=", 1) for option in entry["options"].split())
         leg.steps = [*steps, Step(configure, env), *build_and_test(ctx, build, given, env, options)]
         legs.append(leg)
@@ -490,12 +557,14 @@ def consumption_leg(ctx, stub, given, name, position):
     if not models:
         message = f"no consumer model under '{given['consumer_dir']}': expected at least one of {', '.join(MODELS)}"
         steps.append(Step(["bash", "-c", 'echo "error: $1" >&2; exit 1', "consumption", message]))
-    manifest = root / "vcpkg_installed" / triplet
-    if use_vcpkg:
+    # Under --deps system, vcpkg: true finds the packages installed in the prefix rather than installing its own.
+    through_vcpkg = use_vcpkg and not ctx.system()
+    installed = ctx.boost_prefix if ctx.system() else root / "vcpkg_installed" / triplet
+    if through_vcpkg:
         steps.append(Step([str(ctx.vcpkg_root / "vcpkg"), "install", "--triplet", triplet, "--overlay-triplets", ctx.overlay(),
                            f"--x-install-root={root / 'vcpkg_installed'}"], env, ctx.caller))
     deps = root / "deps-prefix" if str(given["dependency_repos"]).strip() else None
-    search = ";".join(str(path) for path in (deps, manifest if use_vcpkg else None) if path)
+    search = ";".join(str(path) for path in (deps, installed if use_vcpkg else None) if path)
     for index, line in enumerate((line for line in str(given["dependency_repos"]).splitlines() if line.strip()), 1):
         fields = line.split()
         if len(fields) != 2:
@@ -510,13 +579,14 @@ def consumption_leg(ctx, stub, given, name, position):
             Step(["cmake", "--install", str(build), "--prefix", str(deps)]),
         ]
     library = [f"-DCMAKE_TOOLCHAIN_FILE={ctx.toolchain_file()}", f"-DVCPKG_TARGET_TRIPLET={triplet}",
-               f"-DVCPKG_OVERLAY_TRIPLETS={ctx.overlay()}"] if use_vcpkg else []
+               f"-DVCPKG_OVERLAY_TRIPLETS={ctx.overlay()}"] if through_vcpkg else []
+    library_search = search if use_vcpkg and ctx.system() else str(deps or "")
     common = search
     prefix = root / "install-prefix"
     steps += [
         Step(["cmake", "-S", str(ctx.caller), "-B", str(root / "build"), "-G", generator, f"-DCMAKE_C_COMPILER={cc}",
               f"-DCMAKE_CXX_COMPILER={cxx}", "-DBUILD_TESTING=OFF", scan, *library,
-              *([f"-DCMAKE_PREFIX_PATH={deps}"] if deps else []), *str(given["cmake_args"] or "").split()], env),
+              *([f"-DCMAKE_PREFIX_PATH={library_search}"] if library_search else []), *str(given["cmake_args"] or "").split()], env),
         Step(["cmake", "--install", str(root / "build"), "--prefix", str(prefix)]),
     ]
     for model in models:
@@ -528,7 +598,8 @@ def consumption_leg(ctx, stub, given, name, position):
         configure = ["cmake", "-S", str(consumers / model), "-B", str(build), "-G", generator, f"-DCMAKE_CXX_COMPILER={cxx}"]
         configure += [*prefix_args, scan] if model == "find_package" else [scan, *prefix_args]
         steps += [Step(configure, env), Step(["cmake", "--build", str(build), "-v"]), Step([str(build / "main")])]
-    what = f"{file}/{job_id}: {cxx}, {' '.join(models) or 'no model'}{' through vcpkg' if use_vcpkg else ''}"
+    source = (" through vcpkg" if through_vcpkg else f" against {ctx.boost_prefix}") if use_vcpkg else ""
+    what = f"{file}/{job_id}: {cxx}, {' '.join(models) or 'no model'}{source}"
     return Leg(name, (CONSUMPTION, 0, 0, file, position), given["gcc_tier"], what, steps, stub=stub)
 
 
@@ -604,6 +675,9 @@ def discover(ctx):
             legs += sanitizer_legs(ctx, stub, given, position)
         else:
             legs.append(skipped_leg(stub, position))
+    if ctx.system():
+        for step in (step for leg in legs for step in leg.steps):
+            step.env = {key: value for key, value in step.env.items() if not key.startswith("VCPKG_")}
     return sorted(unique(legs), key=lambda leg: leg.order)
 
 
@@ -630,12 +704,19 @@ def pins(ctx):
     return pinned, head.stdout.strip() if head.returncode == 0 else "unknown"
 
 
+def deps_line(ctx):
+    """Where the legs' dependencies come from, for the listing and the dry run."""
+    if ctx.system():
+        return f"dependencies: --deps system, installed in {ctx.boost_prefix}"
+    return f"dependencies: --deps vcpkg, from {ctx.vcpkg_root}"
+
+
 def listing(ctx, legs):
     """--list: every runnable leg in run order with what it runs, then the skipped ones with their reason."""
     width = max([19, *(len(leg.name) for leg in legs)])
     pinned, head = pins(ctx)
     lines = [f"caller {ctx.caller}, pinning cpp-ci {', '.join(pinned) or 'nowhere'}; this checkout is {head}",
-             f"legs build under {ctx.out}", "", "run, in order:"]
+             f"legs build under {ctx.out}", deps_line(ctx), "", "run, in order:"]
     lines += [f"  {leg.name:<{width}}  {leg.what}" for leg in legs if not leg.skip]
     lines += ["", "skipped:"]
     lines += [f"  {leg.name:<{width}}  {leg.what}: {leg.skip}" for leg in legs if leg.skip]
@@ -697,10 +778,20 @@ def run(ctx, legs, keep_going):
     return 1 if failed else 0
 
 
+def deps_mode(flag, environ=os.environ):
+    """--deps where given, else CI_LOCAL_DEPS, else vcpkg."""
+    mode = flag or environ.get("CI_LOCAL_DEPS") or "vcpkg"
+    if mode not in DEPS:
+        raise SystemExit(f"CI_LOCAL_DEPS is {' or '.join(DEPS)}, not '{mode}'")
+    return mode
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run a caller's Linux CI legs locally, from its own workflow stubs.")
     parser.add_argument("--caller", type=Path, default=Path.cwd(), help="the caller's checkout (default: .)")
     parser.add_argument("--out", type=Path, help="where legs build and log (default: <caller>/build/ci-local)")
+    parser.add_argument("--deps", choices=DEPS, help="where vcpkg.json's dependencies come from: vcpkg builds them, "
+                        "system takes what is installed (default: CI_LOCAL_DEPS, else vcpkg)")
     parser.add_argument("--list", action="store_true", help="list the legs in run order, and the skipped ones, and exit")
     parser.add_argument("--dry-run", action="store_true", help="print each selected leg's commands instead of running them")
     parser.add_argument("-k", "--keep-going", action="store_true", help="run every selected leg, whatever fails")
@@ -711,19 +802,24 @@ def main(argv=None):
     caller = args.caller.resolve()
     if not (caller / ".github/workflows").is_dir():
         raise SystemExit(f"{caller} has no .github/workflows: pass the caller's checkout with --caller")
-    ctx = Context(caller, (args.out or caller / "build/ci-local").resolve())
+    ctx = Context(caller, (args.out or caller / "build/ci-local").resolve(), deps=deps_mode(args.deps))
     legs = discover(ctx)
     if args.list:
         print(listing(ctx, select(legs, args.legs, args.stable, runnable_only=False)))
         return 0
     chosen = select(legs, args.legs, args.stable)
     if args.dry_run:
+        print(f"# {deps_line(ctx)}")
         for leg in chosen:
             print(f"== {leg.name}" + (f"  (skipped: {leg.skip})" if leg.skip else ""))
             print("\n".join(shown(step) for step in leg.steps))
         return 0
-    if (caller / "vcpkg.json").is_file() and not Path(ctx.toolchain_file()).is_file():
-        print(f"warning: no vcpkg in {ctx.vcpkg_root}: run tools/setup-toolchain.sh, or set VCPKG_ROOT", file=sys.stderr)
+    if (caller / "vcpkg.json").is_file():
+        if ctx.system() and not any(ctx.boost_prefix.glob("lib/cmake/Boost-*/BoostConfig.cmake")):
+            print(f"warning: no Boost in {ctx.boost_prefix}: run tools/setup-toolchain.sh --boost, or set BOOST_PREFIX",
+                  file=sys.stderr)
+        elif not ctx.system() and not Path(ctx.toolchain_file()).is_file():
+            print(f"warning: no vcpkg in {ctx.vcpkg_root}: run tools/setup-toolchain.sh, or set VCPKG_ROOT", file=sys.stderr)
     return run(ctx, chosen, args.keep_going)
 
 
