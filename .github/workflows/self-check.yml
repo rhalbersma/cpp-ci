@@ -211,6 +211,36 @@ jobs:
       source_dir: test/coverage
       codecov: false
 
+  # The drift report's grouping, pin reading and rendering on repositories held
+  # in memory, then the action itself over the REST API. cpp-ci names no
+  # caller, so it compares this repository with itself, at the merges of #102
+  # and #104: .gitignore agrees, gcovr's action.yml differs, and test_gcovr.py
+  # exists only in the newer, so exactly two files must drift.
+  config-drift:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run the drift report's unit tests
+        run: python3 -I .github/actions/config-drift/test_drift.py -v
+
+      - name: Report on two commits of this repository
+        id: drift
+        uses: ./.github/actions/config-drift
+        with:
+          repositories: rhalbersma/cpp-ci@ad68808 rhalbersma/cpp-ci@6ce8f73
+          files: .gitignore .github/actions/gcovr/action.yml .github/actions/gcovr/test_gcovr.py
+
+      - name: Require the two files that differ, and only those
+        env:
+          DRIFTED: ${{ steps.drift.outputs.drifted }}
+        run: |
+          set -euo pipefail
+          echo "drifted: $DRIFTED"
+          test "$DRIFTED" = ".github/actions/gcovr/action.yml .github/actions/gcovr/test_gcovr.py"
+
   # One check name that does not move, for branch protection to require -- the
   # same role the "all" job has in gcc.yml and its siblings.
   #
@@ -226,7 +256,7 @@ jobs:
     # nothing about what it gates. This is a display name chosen to match
     # them, not a reusable-workflow path.
     name: self-check / all
-    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr, coverage ]
+    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr, coverage, config-drift ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
     # still runs when a leg fails, which is the whole job.
@@ -242,6 +272,7 @@ jobs:
           LAYERING: ${{ needs.layering.result }}
           GCOVR: ${{ needs.gcovr.result }}
           COVERAGE: ${{ needs.coverage.result }}
+          CONFIG_DRIFT: ${{ needs.config-drift.result }}
         run: |
           set -euo pipefail
           echo "actionlint: $ACTIONLINT"
@@ -251,6 +282,7 @@ jobs:
           echo "layering: $LAYERING"
           echo "gcovr: $GCOVR"
           echo "coverage: $COVERAGE"
+          echo "config-drift: $CONFIG_DRIFT"
           # Only success passes. A skipped leg is a leg that did not run, which
           # is exactly what this is here to catch.
           test "$ACTIONLINT" = success
@@ -260,3 +292,4 @@ jobs:
           test "$LAYERING" = success
           test "$GCOVR" = success
           test "$COVERAGE" = success
+          test "$CONFIG_DRIFT" = success
