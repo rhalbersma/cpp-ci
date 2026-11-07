@@ -242,7 +242,7 @@ still wins.
 
 ## Workflows
 
-Eighteen workflows, and the ten that compile and run the caller's test suite
+Nineteen workflows, and the ten that compile and run the caller's test suite
 are the ones that say most; this table sorts all of them by what each does with
 that suite.
 
@@ -252,7 +252,7 @@ that suite.
 | Configured and built, not run | `codeql.yml`, `msvc-analyze.yml` |
 | Configured off; a consumer built instead | `consumption.yml` |
 | Configured for a compile database only | `clang-tidy.yml` |
-| Not configured at all | `clang-format.yml`, `actionlint.yml`, `scorecard.yml` |
+| Not configured at all | `clang-format.yml`, `actionlint.yml`, `scorecard.yml`, `compile-budget.yml` |
 
 `Gate`, in the tables below, is the check name to tick under branch
 protection, with `<job>` standing for the caller's own job id: a stub whose job
@@ -867,6 +867,21 @@ fails on a header that stops compiling on its own. The frontend's time is
 reported beside the counts and never gates: on a shared runner it moves by a
 tenth from run to run, and a gate on it would fail at random. With no base
 tree the action reports the head alone, costliest header first.
+
+[`compile-budget.yml`](.github/workflows/compile-budget.yml) is the action as a
+job: a Clang from the `clang_tier` rung with its paired libstdc++, the
+dependencies from `vcpkg.json` when there is one, and on a pull request the
+base branch's tip checked out beside the merge commit, so that the comparison
+measures what merging would change. On any other event it reports the head.
+The base tree is compiled with the head's dependencies and flags, so only the
+headers differ.
+
+```yaml
+  compile-budget:
+    uses: rhalbersma/cpp-ci/.github/workflows/compile-budget.yml@<sha> # <tag>
+    with:
+      glob: xstd/**/*.hpp
+```
 
 ## Conventions
 

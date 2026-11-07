@@ -282,6 +282,17 @@ jobs:
           flags: -std=c++20
           repeat: "1"
 
+  # compile-budget.yml itself, as a stub calls it, on test/coverage's header.
+  # On a pull request it checks out the merge base beside the head and must
+  # find the header's counts unchanged unless the pull request changes it; on
+  # a push or the schedule it reports the head alone.
+  compile-budget-workflow:
+    uses: ./.github/workflows/compile-budget.yml
+    with:
+      root: test/coverage/include
+      flags: -std=c++20
+      repeat: 1
+
   # One check name that does not move, for branch protection to require -- the
   # same role the "all" job has in gcc.yml and its siblings.
   #
@@ -297,7 +308,7 @@ jobs:
     # nothing about what it gates. This is a display name chosen to match
     # them, not a reusable-workflow path.
     name: self-check / all
-    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr, coverage, config-drift, compile-budget ]
+    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr, coverage, config-drift, compile-budget, compile-budget-workflow ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
     # still runs when a leg fails, which is the whole job.
@@ -315,6 +326,7 @@ jobs:
           COVERAGE: ${{ needs.coverage.result }}
           CONFIG_DRIFT: ${{ needs.config-drift.result }}
           COMPILE_BUDGET: ${{ needs.compile-budget.result }}
+          COMPILE_BUDGET_WORKFLOW: ${{ needs.compile-budget-workflow.result }}
         run: |
           set -euo pipefail
           echo "actionlint: $ACTIONLINT"
@@ -326,6 +338,7 @@ jobs:
           echo "coverage: $COVERAGE"
           echo "config-drift: $CONFIG_DRIFT"
           echo "compile-budget: $COMPILE_BUDGET"
+          echo "compile-budget-workflow: $COMPILE_BUDGET_WORKFLOW"
           # Only success passes. A skipped leg is a leg that did not run, which
           # is exactly what this is here to catch.
           test "$ACTIONLINT" = success
@@ -337,3 +350,4 @@ jobs:
           test "$COVERAGE" = success
           test "$CONFIG_DRIFT" = success
           test "$COMPILE_BUDGET" = success
+          test "$COMPILE_BUDGET_WORKFLOW" = success
