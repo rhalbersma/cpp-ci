@@ -184,17 +184,23 @@ jobs:
   # names must be on PATH and build a program, at the stable rungs alone and
   # at every rung. The stable mode also installs Boost.Test from Boost's
   # release tarball, which a test program links with the stable GCC, and
-  # tools/boost-test.sh builds it again for libc++.
+  # tools/boost-test.sh builds it again for libc++. The stable mode runs on
+  # arm64 too, as a caller's arm64 jobs install that rung through it.
   setup-toolchain:
-    name: setup-toolchain (${{ matrix.mode }})
-    runs-on: ubuntu-24.04
+    name: setup-toolchain (${{ matrix.mode }}, ${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - mode: stable
+            runner: ubuntu-24.04
+            flags: --stable --boost test
+          - mode: stable
+            runner: ubuntu-24.04-arm
             flags: --stable --boost test
           - mode: every rung
+            runner: ubuntu-24.04
             flags: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

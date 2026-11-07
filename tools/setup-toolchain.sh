@@ -50,6 +50,10 @@ while [ "$#" -gt 0 ]; do
         shift
 done
 readonly stable_only
+# The 32-bit multilib, and the Boost built against it, exist on x86-64 alone; elsewhere, such as an arm64 runner, the
+# stable rung installs without them.
+machine="$(uname -m)"
+readonly machine
 boost_libraries=()
 for library in "${boost_listed[@]}"; do
         library="${library// /}"
@@ -129,7 +133,7 @@ packages=("clang-format-${clang_stable}" "libc++-${clang_stable}-dev" "libc++abi
 for version in "${gcc_versions[@]}"; do
         packages+=("g++-${version}")
 done
-[ "${stable_only}" -eq 1 ] || packages+=("g++-${gcc_stable}-multilib")
+[ "${stable_only}" -eq 1 ] || [ "${machine}" != x86_64 ] || packages+=("g++-${gcc_stable}-multilib")
 for tier in "${clang_rungs[@]}"; do
         version="$(rung clang "${tier}" version)"
         packages+=("clang-${version}" "clang-tidy-${version}")
@@ -222,7 +226,8 @@ actionlint_version="$(sed -n "s/.*inputs\.actionlint_version || '\(v[0-9.]*\)'.*
 : "${actionlint_version:?no actionlint version in .github/workflows/actionlint.yml}"
 if ! "${local_bin}/actionlint" --version 2>/dev/null | grep -qx "${actionlint_version#v}"; then
         release="https://github.com/rhysd/actionlint/releases/download/${actionlint_version}"
-        archive="actionlint_${actionlint_version#v}_linux_amd64.tar.gz"
+        case "${machine}" in aarch64) platform=linux_arm64 ;; *) platform=linux_amd64 ;; esac
+        archive="actionlint_${actionlint_version#v}_${platform}.tar.gz"
         scratch="$(mktemp -d)"
         curl -fsSL --retry 3 "${release}/${archive}" -o "${scratch}/${archive}"
         curl -fsSL --retry 3 "${release}/actionlint_${actionlint_version#v}_checksums.txt" -o "${scratch}/checksums.txt"
@@ -262,7 +267,7 @@ boost_installed() {
         done
 }
 boost_targets=("${boost_prefix}:")
-[ "${stable_only}" -eq 1 ] || boost_targets+=("${boost_prefix}/i686:-m32")
+[ "${stable_only}" -eq 1 ] || [ "${machine}" != x86_64 ] || boost_targets+=("${boost_prefix}/i686:-m32")
 boost=""
 if [ "${#boost_libraries[@]}" -gt 0 ]; then
         cmake="${local_bin}/cmake"

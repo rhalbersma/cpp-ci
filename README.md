@@ -828,8 +828,13 @@ CMake its workflows pin. A second run installs nothing. libc++ stays at the
 stable rung, since apt's libc++ packages exclude one another and CI gives each
 libc++ leg a runner of its own. Apt sources are written as files rather than
 through `add-apt-repository`, which needs the system Python's `apt_pkg`.
+On an arm64 machine it installs the same rungs without what exists on x86-64
+alone: GCC's 32-bit multilib and the `-m32` Boost, with actionlint's arm64
+release in place of its amd64 one.
+
 `self-check.yml` runs it on a fresh runner in both modes, twice, and builds a
-program with every compiler it installed.
+program with every compiler it installed; the stable mode runs on an arm64
+runner as well.
 
 `--boost` is for a machine whose network refuses the source archives vcpkg's
 Boost ports download from `github.com` and `codeload.github.com`, though it
