@@ -830,6 +830,80 @@ through `add-apt-repository`, which needs the system Python's `apt_pkg`.
 `self-check.yml` runs it on a fresh runner in both modes, twice, and builds a
 program with every compiler it installed.
 
+## Running a caller's Linux legs locally
+
+[`tools/ci_local.py`](tools/ci_local.py) runs on that toolchain the legs a
+caller's CI runs on Linux, so a change breaks locally, with no queue, and CI
+confirms rather than discovers. It reads no list of its own: every job in the
+caller's `.github/workflows/*.yml` whose `uses:` names a workflow here is a leg
+source, its `with:` inputs override that workflow's defaults, and its tiers
+resolve through [`toolchains.json`](.github/actions/toolchain/toolchains.json).
+A BMI2 or i686 leg, or another caller's C++26 leg, appears because the stub
+asks for it. Each leg configures, builds and tests as its workflow's Linux job
+does, with the same cmake arguments, vcpkg triplets and overlay toolchains, and
+runs the same scripts: the clang-tidy passes, the gcovr gate, the sanitizer leg
+table. A caller runs it from a checkout of this repository at the commit its
+stubs pin, with Python 3.11 or later and PyYAML:
+
+```sh
+tools/ci_local.py --caller ../xstd-ints --list          # the legs, in run order, and the skipped ones
+tools/ci_local.py --caller ../xstd-ints                 # every leg, stopping at the first failure
+tools/ci_local.py --caller ../xstd-ints --stable        # the stable tier's legs and the tier-free ones
+tools/ci_local.py --caller ../xstd-ints 'gcc-*' format  # the legs named or matched, in the order given
+tools/ci_local.py --caller ../xstd-ints --keep-going    # every leg, whatever fails
+tools/ci_local.py --caller ../xstd-ints --dry-run gcc-15  # the commands, without running them
+```
+
+Legs run cheapest first: actionlint and format, the suite legs at the stable
+tier, the suite legs at the other tiers, clang-tidy, coverage, the sanitizers,
+then consumption. Each builds in `<out>/<leg>` and logs to `<out>/<leg>.log`,
+`<out>` being `<caller>/build/ci-local` unless `--out` says otherwise, and the
+run ends with one line per leg: pass or FAIL, seconds, log. A second run
+reuses each build tree.
+
+A leg is named for its stub's job and its rung's label, the job id losing a
+`_ladder` suffix and taking hyphens for underscores: `gcc_ladder` gives
+`gcc-15`, `gcc-16` and `gcc-17-svn`, `i686` gives `i686-15`, `gcc_bmi2` gives
+`gcc-bmi2-15` and `clang_tidy_ladder` gives `clang-tidy-22`. A sanitizer leg
+takes the sanitizer's own id, as `asan-15` or `ubsan-clang-22`. The one-leg
+workflows are `actionlint`, `format`, `coverage` and `consumption`. A name two
+stubs would share is prefixed with the stub's file name.
+
+Skipped, and listed with the reason: the Windows and macOS workflows, which no
+Linux machine reproduces (`visual-studio`, `msvc-analyze`, `mingw`,
+`apple-clang`, `ios`), and those that stay CI's (`emscripten`, `android-ndk`,
+`s390x`, `codeql`, `scorecard`, `compile-budget`). A caller's own jobs, those
+calling no workflow here, are not this runner's and appear nowhere; the
+caller's wrapper runs them itself.
+
+Where a local run differs from CI's, and why:
+
+- **libc++ and the sanitizers at the stable rung.** Apt's libc++ packages
+  exclude one another, so a machine holds one, and CI gives each libc++ leg a
+  runner of its own. The other rungs' libc++ and sanitizer legs are listed as
+  skipped.
+- **An explicit libstdc++ for Clang.** A CI job installs only the GCC it pairs
+  with Clang; a local machine holds every GCC, and Clang picks the newest. A
+  Clang rung whose `cxxflags` are empty gets
+  `--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/<gcc_version>` in the
+  project's flags and in `VCPKG_CLANG_FLAGS`, and the clang-tidy legs get the
+  `gcc_tier`'s. clang-tidy's header pass runs outside the compile database and
+  still sees the newest libstdc++.
+- **One vcpkg binary cache.** Dependencies install through the CMake
+  toolchain's manifest install into each leg's tree, never into the caller's
+  checkout, against vcpkg's default binary cache, `VCPKG_DEFAULT_BINARY_CACHE`
+  or else `~/.cache/vcpkg/archives`, which every leg and every caller share:
+  the ABI hash in each archive's name keeps compilers apart. vcpkg is the one
+  in `VCPKG_ROOT`, or else `~/.local/share/cpp-ci/vcpkg`, where
+  `setup-toolchain.sh` checks out the pinned commit. Its ports download from
+  `github.com` and `codeload.github.com`, which a sandboxed machine must be able
+  to reach.
+- **Parallelism by memory everywhere.** Every build runs as many jobs as
+  available memory holds at `build_memory_mib` each, coverage's included, and
+  `reduce_on_pr` never applies: a local run is a push.
+
+`self-check.yml` runs its unit tests, on fixture stubs and with no compiler.
+
 ## Actions
 
 The composite actions exist because a reusable workflow checks out the
