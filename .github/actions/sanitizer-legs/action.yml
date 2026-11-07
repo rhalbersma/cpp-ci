@@ -1,0 +1,40 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Sanitizer legs
+description: >
+  Cross the sanitizer ladder's legs with the compiler rungs each runs on: ASan
+  and LSan on GCC and on Clang with libc++, UBSan on GCC and on Clang, and
+  Clang's implicit-conversion check. The legs live in legs.json beside this
+  action and the crossing in sanitizer-legs.sh, the one table the Sanitizers
+  workflow and a developer's local run share.
+
+inputs:
+  gcc_rungs:
+    description: The toolchain action's matrix output for the GCC rungs.
+    required: true
+  clang_rungs:
+    description: The toolchain action's matrix output for the Clang rungs.
+    required: true
+  libcxx_rungs:
+    description: The same for the libc++ rungs; empty drops the libc++ leg.
+    required: false
+    default: ""
+
+outputs:
+  matrix:
+    description: The crossed matrix, one entry per leg and rung, for a strategy's include.
+    value: ${{ steps.cross.outputs.matrix }}
+
+runs:
+  using: composite
+  steps:
+    - id: cross
+      shell: bash
+      env:
+        GCC_RUNGS: ${{ inputs.gcc_rungs }}
+        CLANG_RUNGS: ${{ inputs.clang_rungs }}
+        LIBCXX_RUNGS: ${{ inputs.libcxx_rungs }}
+      run: bash "$GITHUB_ACTION_PATH/sanitizer-legs.sh"

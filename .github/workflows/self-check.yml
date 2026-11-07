@@ -158,6 +158,34 @@ jobs:
       - name: Run the layering check's unit tests
         run: python3 -I .github/actions/layering/test_layering.py -v
 
+  # The sanitizer ladder's legs crossed with rungs shaped as the toolchain
+  # action emits them: by sanitizer-legs.sh's unit tests, then through the
+  # action itself, so its matrix output is what a workflow reads.
+  sanitizer-legs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run the sanitizer legs' unit tests
+        run: python3 -I .github/actions/sanitizer-legs/test_sanitizer_legs.py -v
+
+      - name: Cross the legs through the action
+        id: legs
+        uses: ./.github/actions/sanitizer-legs
+        with:
+          gcc_rungs: '{"include":[{"label":"15","version":"15"}]}'
+          clang_rungs: '{"include":[{"label":"22","version":"22","gcc_version":"15"}]}'
+          libcxx_rungs: '{"include":[{"label":"22","version":"22","gcc_version":"15"}]}'
+
+      - name: Require one entry per leg
+        env:
+          MATRIX: ${{ steps.legs.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          test "$(jq '.include | length' <<< "$MATRIX")" -eq 5
+
   # The coverage gate, gcovr.sh, on a small library-shaped fixture built with
   # the stable rung's GCC and its gcov, as coverage.yml builds a caller: an
   # uncovered line or branch fails it, an excluded path stays out, each
@@ -308,7 +336,7 @@ jobs:
     # nothing about what it gates. This is a display name chosen to match
     # them, not a reusable-workflow path.
     name: self-check / all
-    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr, coverage, config-drift, compile-budget, compile-budget-workflow ]
+    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, sanitizer-legs, gcovr, coverage, config-drift, compile-budget, compile-budget-workflow ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
     # still runs when a leg fails, which is the whole job.
@@ -322,6 +350,7 @@ jobs:
           INSTALL_GCC: ${{ needs.install-gcc.result }}
           STD_TEST_SUITE: ${{ needs.std-test-suite.result }}
           LAYERING: ${{ needs.layering.result }}
+          SANITIZER_LEGS: ${{ needs.sanitizer-legs.result }}
           GCOVR: ${{ needs.gcovr.result }}
           COVERAGE: ${{ needs.coverage.result }}
           CONFIG_DRIFT: ${{ needs.config-drift.result }}
@@ -334,6 +363,7 @@ jobs:
           echo "install-gcc: $INSTALL_GCC"
           echo "std-test-suite: $STD_TEST_SUITE"
           echo "layering: $LAYERING"
+          echo "sanitizer-legs: $SANITIZER_LEGS"
           echo "gcovr: $GCOVR"
           echo "coverage: $COVERAGE"
           echo "config-drift: $CONFIG_DRIFT"
@@ -346,6 +376,7 @@ jobs:
           test "$INSTALL_GCC" = success
           test "$STD_TEST_SUITE" = success
           test "$LAYERING" = success
+          test "$SANITIZER_LEGS" = success
           test "$GCOVR" = success
           test "$COVERAGE" = success
           test "$CONFIG_DRIFT" = success

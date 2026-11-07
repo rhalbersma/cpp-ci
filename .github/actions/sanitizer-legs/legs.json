@@ -1,0 +1,18 @@
+[
+  {"id":"asan","name":"ASan + LSan","compiler":"GCC","family":"gcc",
+   "flags":"-fsanitize=address -fno-omit-frame-pointer",
+   "options":"ASAN_OPTIONS=detect_leaks=1"},
+  {"id":"asan-libcxx","name":"ASan + LSan","compiler":"Clang libc++","family":"clang","libcxx":true,
+   "flags":"-fsanitize=address -fno-omit-frame-pointer -stdlib=libc++",
+   "options":"ASAN_OPTIONS=detect_leaks=1"},
+  {"id":"ubsan-gcc","name":"UBSan","compiler":"GCC","family":"gcc",
+   "flags":"-fsanitize=undefined -fno-sanitize-recover=undefined",
+   "options":"UBSAN_OPTIONS=print_stacktrace=1"},
+  {"id":"ubsan-clang","name":"UBSan","compiler":"Clang","family":"clang",
+   "flags":"-fsanitize=undefined -fno-sanitize-recover=undefined",
+   "options":"UBSAN_OPTIONS=print_stacktrace=1"},
+  {"id":"implicit-conversion","name":"Implicit conversion","compiler":"Clang","family":"clang",
+   "ignore_foreign_code":true,
+   "flags":"-fsanitize=implicit-conversion -fno-sanitize-recover=implicit-conversion",
+   "options":"UBSAN_OPTIONS=print_stacktrace=1"}
+]

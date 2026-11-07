@@ -820,6 +820,7 @@ caller rather than this repository.
 | `vcpkg-install` | `vcpkg install`, retried around a download vcpkg will not retry |
 | `clang-tidy` | clang-tidy's passes over a configured build, the one script CI and a local run share |
 | `gcovr` | The coverage gate's gcovr run and its exclusions, the one script CI and a local run share |
+| `sanitizer-legs` | The sanitizer ladder's legs, crossed with the compiler rungs each runs on, the one table CI and a local run share |
 | `layering` | The header layering check over a caller's folders, read from the `#include` lines, the one script CI and a local run share |
 | `config-drift` | A report of where a group of repositories disagree on the files they share, and which commit of this repository each pins |
 | `compile-budget` | What each header costs to include on its own under Clang, and a gate on its growth against a base tree |
@@ -828,8 +829,8 @@ Anything a workflow needs to read from here therefore has to arrive as an
 action: an action is fetched from its own repository and `GITHUB_ACTION_PATH`
 points at it. That is why the overlay triplets are an action rather than eight
 files copied into four repositories, and why the clang-tidy passes, the
-coverage gate, the layering check and the compiler installs are scripts behind
-actions: a developer then runs before pushing the very scripts CI runs, and
+coverage gate, the layering check, the sanitizer legs and the compiler installs
+are scripts behind actions: a developer then runs before pushing the very scripts CI runs, and
 installs the very compilers CI builds with. `install-gcc.sh` and
 `install-clang.sh` take the actions' inputs as environment variables, which each
 script's header lists.
