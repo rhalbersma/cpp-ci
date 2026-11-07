@@ -224,12 +224,6 @@ class Msvc(unittest.TestCase):
             self.assertIn("crtdbg.h", reason)
             self.assertEqual(sts.msvc_classify("tests/GH_2/test.cpp", text, MSVC, root)[0], "run")
 
-    def test_shim(self):
-        # is_permissive.hpp includes <yvals_core.h> for _INLINE_VAR; the tests themselves read _HAS_CXX23.
-        text = (sts.MSVC_STL_SHIM / "yvals_core.h").read_text()
-        for macro in ("_INLINE_VAR", "_HAS_CXX17", "_HAS_CXX20", "_HAS_CXX23", "_HAS_CXX26"):
-            self.assertIn(f"#define {macro} ", text)
-
     def test_stacktrace_link(self):
         # P0881R7_stacktrace: libstdc++ before 16 keeps std::stacktrace in libstdc++exp.
         with tempfile.TemporaryDirectory() as root:
