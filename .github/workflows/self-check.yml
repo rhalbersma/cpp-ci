@@ -158,6 +158,41 @@ jobs:
       - name: Run the layering check's unit tests
         run: python3 -I .github/actions/layering/test_layering.py -v
 
+  # The coverage gate, gcovr.sh, on a small library-shaped fixture built with
+  # the stable rung's GCC and its gcov, as coverage.yml builds a caller: an
+  # uncovered line or branch fails it, an excluded path stays out, each
+  # exclusion pattern has a case it is needed for, and the reports land where
+  # the workflow's later steps read them.
+  gcovr:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/apt-retry
+
+      - name: Resolve the stable rung
+        id: toolchain
+        uses: ./.github/actions/toolchain
+        with:
+          toolchain: gcc
+          tier: stable
+
+      - name: Install GCC
+        uses: ./.github/actions/install-gcc
+        with:
+          version: ${{ steps.toolchain.outputs.version }}
+          trunk: ${{ steps.toolchain.outputs.trunk }}
+
+      - name: Install gcovr
+        uses: ./.github/actions/install-gcovr
+
+      - name: Run the coverage gate's tests
+        env:
+          VERSION: ${{ steps.toolchain.outputs.version }}
+        run: CXX="g++-${VERSION}" GCOV="gcov-${VERSION}" python3 -I .github/actions/gcovr/test_gcovr.py -v
+
   # One check name that does not move, for branch protection to require -- the
   # same role the "all" job has in gcc.yml and its siblings.
   #
@@ -173,7 +208,7 @@ jobs:
     # nothing about what it gates. This is a display name chosen to match
     # them, not a reusable-workflow path.
     name: self-check / all
-    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering ]
+    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
     # still runs when a leg fails, which is the whole job.
@@ -187,6 +222,7 @@ jobs:
           INSTALL_GCC: ${{ needs.install-gcc.result }}
           STD_TEST_SUITE: ${{ needs.std-test-suite.result }}
           LAYERING: ${{ needs.layering.result }}
+          GCOVR: ${{ needs.gcovr.result }}
         run: |
           set -euo pipefail
           echo "actionlint: $ACTIONLINT"
@@ -194,6 +230,7 @@ jobs:
           echo "install-gcc: $INSTALL_GCC"
           echo "std-test-suite: $STD_TEST_SUITE"
           echo "layering: $LAYERING"
+          echo "gcovr: $GCOVR"
           # Only success passes. A skipped leg is a leg that did not run, which
           # is exactly what this is here to catch.
           test "$ACTIONLINT" = success
@@ -201,3 +238,4 @@ jobs:
           test "$INSTALL_GCC" = success
           test "$STD_TEST_SUITE" = success
           test "$LAYERING" = success
+          test "$GCOVR" = success
