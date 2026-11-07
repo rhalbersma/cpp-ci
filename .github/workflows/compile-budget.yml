@@ -1,0 +1,213 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Compile budget
+
+permissions:
+  contents: read
+
+# No concurrency group; see gcc.yml. It belongs to the calling stub.
+
+on:
+  workflow_call:
+    inputs:
+      clang_tier:
+        description: Rung supplying the Clang and its paired libstdc++.
+        type: string
+        required: false
+        default: stable
+      root:
+        description: The include directory, relative to the checkout; headers are named relative to it.
+        type: string
+        required: false
+        default: include
+      glob:
+        description: Which headers under root to measure, as a pathlib glob.
+        type: string
+        required: false
+        default: "**/*.hpp"
+      flags:
+        description: >
+          Whitespace-separated compiler flags for every translation unit. The
+          root, and the include directory of the vcpkg dependencies when the
+          checkout has a vcpkg.json, are added on their own.
+        type: string
+        required: false
+        default: "-std=c++2c"
+      threshold:
+        description: Percentage growth of any count above which the job fails.
+        type: number
+        required: false
+        default: 5
+      min_delta:
+        description: Growth smaller than this many, in absolute terms, never fails.
+        type: number
+        required: false
+        default: 1
+      repeat:
+        description: Runs per header; the reported time is the least of them.
+        type: number
+        required: false
+        default: 3
+      base_ref:
+        description: >
+          What to compare against, as any ref or commit the checkout can reach.
+          Empty means the pull request's base branch; on any other event, with
+          nothing to compare against, the head is reported and nothing fails.
+        type: string
+        required: false
+        default: ""
+      vcpkg_triplet:
+        description: Triplet for the dependencies the headers include.
+        type: string
+        required: false
+        default: x64-linux
+      vcpkg_features:
+        description: Comma-separated manifest features to install, beside the default ones.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  budget:
+    name: compile budget
+    runs-on: ubuntu-24.04
+    env:
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+      VCPKG_CACHE_KEY: vcpkg-compile-budget-
+
+    steps:
+      # The whole history, so the merge base is there to check out beside the head.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@d0f1d295d59167c75530aa657dc5f77e56545b16
+
+      - name: Resolve the toolchain on this rung
+        id: toolchain
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@d0f1d295d59167c75530aa657dc5f77e56545b16
+        with:
+          toolchain: clang
+          tier: ${{ inputs.clang_tier }}
+
+      - name: Require the rung to be filled
+        if: steps.toolchain.outputs.supported != 'true'
+        env:
+          TIER: ${{ inputs.clang_tier }}
+        run: |
+          echo "::error::clang has no $TIER rung"
+          exit 1
+
+      # Not a compiler here: only the standard library Clang pairs with is wanted.
+      - name: Install the paired libstdc++
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@d0f1d295d59167c75530aa657dc5f77e56545b16
+        with:
+          version: ${{ steps.toolchain.outputs.gcc_version }}
+          trunk: ${{ steps.toolchain.outputs.gcc_trunk }}
+          symlink_binaries: "false"
+
+      - name: Install Clang
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@d0f1d295d59167c75530aa657dc5f77e56545b16
+        with:
+          version: ${{ steps.toolchain.outputs.version }}
+          llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
+
+      - name: Restore vcpkg binary cache
+        if: hashFiles('vcpkg.json') != ''
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
+          restore-keys: ${{ env.VCPKG_CACHE_KEY }}
+
+      - name: Check out vcpkg at the pinned commit
+        if: hashFiles('vcpkg.json') != ''
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@d0f1d295d59167c75530aa657dc5f77e56545b16
+
+      - name: Install the dependencies
+        if: hashFiles('vcpkg.json') != ''
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@d0f1d295d59167c75530aa657dc5f77e56545b16
+        with:
+          triplet: ${{ inputs.vcpkg_triplet }}
+          features: ${{ inputs.vcpkg_features }}
+
+      - name: Save vcpkg binary cache
+        if: >-
+          hashFiles('vcpkg.json') != '' &&
+          hashFiles('vcpkg-cache/**') != '' &&
+          steps.vcpkg-cache.outputs.cache-matched-key !=
+          format('{0}{1}', env.VCPKG_CACHE_KEY, hashFiles('vcpkg-cache/**'))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ env.VCPKG_CACHE_KEY }}${{ hashFiles('vcpkg-cache/**') }}
+
+      # On a pull request the checkout is the merge commit, so its merge base
+      # with the base branch is that branch's tip, and the comparison measures
+      # exactly what merging would change. The base tree is built with the
+      # head's dependencies and flags, so only the headers differ.
+      - name: Check out the base beside the head
+        id: base
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          ROOT: ${{ inputs.root }}
+        run: |
+          set -euo pipefail
+          ref="${BASE_REF:-$PR_BASE}"
+          if [ -z "$ref" ]; then
+            echo "Nothing to compare against on a ${GITHUB_EVENT_NAME} event; reporting the head."
+            echo "root=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base="$(git merge-base "$ref" HEAD)"
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+          if [ ! -d "$RUNNER_TEMP/base/$ROOT" ]; then
+            echo "The base, ${base:0:7}, has no $ROOT; reporting the head."
+            echo "root=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Comparing against ${base:0:7}."
+          echo "root=$RUNNER_TEMP/base/$ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble the compiler flags
+        id: flags
+        env:
+          FLAGS: ${{ inputs.flags }}
+          RUNG_FLAGS: ${{ steps.toolchain.outputs.cxxflags }}
+          TRIPLET: ${{ inputs.vcpkg_triplet }}
+        run: |
+          set -euo pipefail
+          flags="$RUNG_FLAGS $FLAGS"
+          # -isystem, so a dependency's own warnings are not this budget's.
+          if [ -d "vcpkg_installed/$TRIPLET/include" ]; then
+            flags="$flags -isystem $GITHUB_WORKSPACE/vcpkg_installed/$TRIPLET/include"
+          fi
+          echo "flags=$flags" >> "$GITHUB_OUTPUT"
+
+      - name: Measure and compare
+        uses: rhalbersma/cpp-ci/.github/actions/compile-budget@d0f1d295d59167c75530aa657dc5f77e56545b16
+        with:
+          root: ${{ inputs.root }}
+          base_root: ${{ steps.base.outputs.root }}
+          glob: ${{ inputs.glob }}
+          cxx: clang++-${{ steps.toolchain.outputs.version }}
+          flags: ${{ steps.flags.outputs.flags }}
+          repeat: ${{ inputs.repeat }}
+          threshold: ${{ inputs.threshold }}
+          min_delta: ${{ inputs.min_delta }}
+          out_dir: ${{ runner.temp }}/compile-budget
+
+      - name: Upload the measurements
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: compile-budget
+          path: ${{ runner.temp }}/compile-budget/*.json
+          if-no-files-found: ignore

@@ -242,7 +242,7 @@ still wins.
 
 ## Workflows
 
-Eighteen workflows, and the ten that compile and run the caller's test suite
+Nineteen workflows, and the ten that compile and run the caller's test suite
 are the ones that say most; this table sorts all of them by what each does with
 that suite.
 
@@ -252,7 +252,7 @@ that suite.
 | Configured and built, not run | `codeql.yml`, `msvc-analyze.yml` |
 | Configured off; a consumer built instead | `consumption.yml` |
 | Configured for a compile database only | `clang-tidy.yml` |
-| Not configured at all | `clang-format.yml`, `actionlint.yml`, `scorecard.yml` |
+| Not configured at all | `clang-format.yml`, `actionlint.yml`, `scorecard.yml`, `compile-budget.yml` |
 
 `Gate`, in the tables below, is the check name to tick under branch
 protection, with `<job>` standing for the caller's own job id: a stub whose job
@@ -812,14 +812,15 @@ caller rather than this repository.
 | :----- | :------ |
 | `toolchain` | Resolve rungs to compilers: one rung, or a whole strategy matrix |
 | `apt-retry` | Set the retry key apt actually reads, and drop the image's unused Microsoft source, once per job |
-| `install-gcc` | A GCC release from the toolchain PPA, or from the Launchpad librarian when the PPA's mirror is down; or the trunk snapshot |
-| `install-clang` | A Clang from apt.llvm.org, optionally with libc++ |
+| `install-gcc` | A GCC release from the toolchain PPA, or from the Launchpad librarian when the PPA's mirror is down; or the trunk snapshot. The one script CI and a local install share |
+| `install-clang` | A Clang from apt.llvm.org, optionally with libc++, clang-format and clang-tidy. The one script CI and a local install share |
 | `install-android-ndk` | One Android NDK release from Google, checked against its published SHA-1, for every API level |
 | `vcpkg-setup` | Check out and bootstrap vcpkg at this repository's pinned commit, in place of the runner image's |
 | `vcpkg-overlay` | Locate the overlay triplets, which live here rather than in each caller |
 | `vcpkg-install` | `vcpkg install`, retried around a download vcpkg will not retry |
 | `clang-tidy` | clang-tidy's passes over a configured build, the one script CI and a local run share |
 | `gcovr` | The coverage gate's gcovr run and its exclusions, the one script CI and a local run share |
+| `sanitizer-legs` | The sanitizer ladder's legs, crossed with the compiler rungs each runs on, the one table CI and a local run share |
 | `layering` | The header layering check over a caller's folders, read from the `#include` lines, the one script CI and a local run share |
 | `config-drift` | A report of where a group of repositories disagree on the files they share, and which commit of this repository each pins |
 | `compile-budget` | What each header costs to include on its own under Clang, and a gate on its growth against a base tree |
@@ -828,8 +829,11 @@ Anything a workflow needs to read from here therefore has to arrive as an
 action: an action is fetched from its own repository and `GITHUB_ACTION_PATH`
 points at it. That is why the overlay triplets are an action rather than eight
 files copied into four repositories, and why the clang-tidy passes, the
-coverage gate and the layering check are scripts behind actions: a developer
-then runs before pushing the very scripts CI runs.
+coverage gate, the layering check, the sanitizer legs and the compiler installs
+are scripts behind actions: a developer then runs before pushing the very scripts CI runs, and
+installs the very compilers CI builds with. `install-gcc.sh` and
+`install-clang.sh` take the actions' inputs as environment variables, which each
+script's header lists.
 
 `config-drift` is the one a caller runs on a schedule rather than on its pull
 requests. A family of repositories that means to share its configuration names
@@ -867,6 +871,21 @@ fails on a header that stops compiling on its own. The frontend's time is
 reported beside the counts and never gates: on a shared runner it moves by a
 tenth from run to run, and a gate on it would fail at random. With no base
 tree the action reports the head alone, costliest header first.
+
+[`compile-budget.yml`](.github/workflows/compile-budget.yml) is the action as a
+job: a Clang from the `clang_tier` rung with its paired libstdc++, the
+dependencies from `vcpkg.json` when there is one, and on a pull request the
+base branch's tip checked out beside the merge commit, so that the comparison
+measures what merging would change. On any other event it reports the head.
+The base tree is compiled with the head's dependencies and flags, so only the
+headers differ.
+
+```yaml
+  compile-budget:
+    uses: rhalbersma/cpp-ci/.github/workflows/compile-budget.yml@<sha> # <tag>
+    with:
+      glob: xstd/**/*.hpp
+```
 
 ## Conventions
 
