@@ -803,6 +803,33 @@ minor-version input — `version=<n>` selects the preview toolset build, not a
 floor — so a subversion is a documented requirement rather than something a leg
 verifies. A caller wanting it enforced has to drop the rung instead.
 
+## Building locally with CI's toolchain
+
+[`tools/setup-toolchain.sh`](tools/setup-toolchain.sh) installs on an Ubuntu
+machine what the workflows build and check with, at the versions this
+repository pins, read from where the workflows read them: GCC and Clang at
+every rung of [`toolchains.json`](.github/actions/toolchain/toolchains.json),
+with GCC's development rung as the trunk snapshot; clang-tidy for each Clang;
+clang-format and libc++ at the stable rung; the stable GCC's 32-bit multilib;
+gcovr from `install-gcovr`'s hash-pinned requirements; actionlint at the
+release the actionlint workflow builds; and vcpkg at the commit `vcpkg-setup`
+checks out. A caller runs it from a checkout of this repository at the commit
+its own workflows pin, so a local build and CI cannot disagree about versions:
+
+```sh
+tools/setup-toolchain.sh                                   # every rung
+tools/setup-toolchain.sh --stable                          # the stable rungs alone
+tools/setup-toolchain.sh --requirements tools/cmake-requirements.txt
+```
+
+`--requirements` adds a caller's own hash-pinned requirements, such as the
+CMake its workflows pin. A second run installs nothing. libc++ stays at the
+stable rung, since apt's libc++ packages exclude one another and CI gives each
+libc++ leg a runner of its own. Apt sources are written as files rather than
+through `add-apt-repository`, which needs the system Python's `apt_pkg`.
+`self-check.yml` runs it on a fresh runner in both modes, twice, and builds a
+program with every compiler it installed.
+
 ## Actions
 
 The composite actions exist because a reusable workflow checks out the
