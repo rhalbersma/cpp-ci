@@ -87,6 +87,21 @@ on:
         type: string
         required: false
         default: Ninja
+      source_dir:
+        description: >
+          The project's root, relative to the checkout: where vcpkg.json and
+          the top-level CMakeLists.txt sit. The build tree, the reports and
+          the exclude patterns are all relative to it.
+        type: string
+        required: false
+        default: "."
+      codecov:
+        description: >
+          Whether to upload the report to Codecov. Off for a project Codecov
+          does not know, whose upload would be rejected and fail the job.
+        type: boolean
+        required: false
+        default: true
 
 jobs:
   coverage:
@@ -96,15 +111,20 @@ jobs:
       VCPKG_BINARY_SOURCES: "clear;default,readwrite"
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
       VCPKG_CACHE_KEY: vcpkg-coverage-
+    # The run steps' directory; the actions below take it as an input, since
+    # a composite action's steps start in the workspace whatever the job says.
+    defaults:
+      run:
+        working-directory: ${{ inputs.source_dir }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@f2c8315bf8c606db37fca1c261d54609066caf9c
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@6ce8f730e6c988e0d1826cdf2a8b01af350f114b
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@f2c8315bf8c606db37fca1c261d54609066caf9c
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@6ce8f730e6c988e0d1826cdf2a8b01af350f114b
         with:
           toolchain: gcc
           tier: ${{ inputs.gcc_tier }}
@@ -118,13 +138,13 @@ jobs:
           exit 1
 
       - name: Install GCC
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@f2c8315bf8c606db37fca1c261d54609066caf9c
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@6ce8f730e6c988e0d1826cdf2a8b01af350f114b
         with:
           version: ${{ steps.toolchain.outputs.version }}
           trunk: ${{ steps.toolchain.outputs.trunk }}
 
       - name: Install gcovr
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@f2c8315bf8c606db37fca1c261d54609066caf9c
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcovr@6ce8f730e6c988e0d1826cdf2a8b01af350f114b
 
       - name: Name the toolchain
         env:
@@ -156,13 +176,14 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@f2c8315bf8c606db37fca1c261d54609066caf9c
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@6ce8f730e6c988e0d1826cdf2a8b01af350f114b
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@f2c8315bf8c606db37fca1c261d54609066caf9c
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@6ce8f730e6c988e0d1826cdf2a8b01af350f114b
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}
+          working_directory: ${{ inputs.source_dir }}
 
       # Keyed on the archives' contents: an unconditional save would add an
       # entry per run and evict this repo's other caches.
@@ -227,9 +248,10 @@ jobs:
       # before pushing; the script carries the reasons for each exclusion.
       - name: Generate coverage report
         id: report
-        uses: rhalbersma/cpp-ci/.github/actions/gcovr@f2c8315bf8c606db37fca1c261d54609066caf9c
+        uses: rhalbersma/cpp-ci/.github/actions/gcovr@6ce8f730e6c988e0d1826cdf2a8b01af350f114b
         with:
           gcov: ${{ env.TOOLCHAIN_GCOV }}
+          working_directory: ${{ inputs.source_dir }}
           exclude: ${{ inputs.exclude }}
           fail_under_line: ${{ inputs.fail_under_line }}
           fail_under_branch: ${{ inputs.fail_under_branch }}
@@ -249,10 +271,10 @@ jobs:
       # Without these the CLI's own gcov plugin blends an unfiltered second
       # pass in alongside coverage.xml, undoing the exclusions above.
       - name: Upload to Codecov
-        if: always() && steps.report.outcome != 'skipped'
+        if: always() && steps.report.outcome != 'skipped' && inputs.codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
-          files: build/coverage.xml
+          files: ${{ inputs.source_dir }}/build/coverage.xml
           plugins: noop
           disable_search: true
           use_oidc: true
@@ -265,4 +287,4 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-xml
-          path: build/coverage.xml
+          path: ${{ inputs.source_dir }}/build/coverage.xml

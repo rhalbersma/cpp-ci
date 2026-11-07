@@ -193,6 +193,24 @@ jobs:
           VERSION: ${{ steps.toolchain.outputs.version }}
         run: CXX="g++-${VERSION}" GCOV="gcov-${VERSION}" python3 -I .github/actions/gcovr/test_gcovr.py -v
 
+  # coverage.yml itself, as a caller's stub calls it, on test/coverage: a
+  # header-only library whose Boost.Test suite vcpkg installs. The gate's own
+  # rules are the gcovr leg's; this one catches the wiring around them -- the
+  # configure flags, the install, the report steps' conditions -- which
+  # actionlint reads but nothing runs. Codecov does not know this repository,
+  # so the upload is off.
+  #
+  # id-token because coverage.yml asks for it at workflow level, for the
+  # upload, and a called workflow cannot exceed its caller's grant.
+  coverage:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/coverage.yml
+    with:
+      source_dir: test/coverage
+      codecov: false
+
   # One check name that does not move, for branch protection to require -- the
   # same role the "all" job has in gcc.yml and its siblings.
   #
@@ -208,7 +226,7 @@ jobs:
     # nothing about what it gates. This is a display name chosen to match
     # them, not a reusable-workflow path.
     name: self-check / all
-    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr ]
+    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr, coverage ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
     # still runs when a leg fails, which is the whole job.
@@ -223,6 +241,7 @@ jobs:
           STD_TEST_SUITE: ${{ needs.std-test-suite.result }}
           LAYERING: ${{ needs.layering.result }}
           GCOVR: ${{ needs.gcovr.result }}
+          COVERAGE: ${{ needs.coverage.result }}
         run: |
           set -euo pipefail
           echo "actionlint: $ACTIONLINT"
@@ -231,6 +250,7 @@ jobs:
           echo "std-test-suite: $STD_TEST_SUITE"
           echo "layering: $LAYERING"
           echo "gcovr: $GCOVR"
+          echo "coverage: $COVERAGE"
           # Only success passes. A skipped leg is a leg that did not run, which
           # is exactly what this is here to catch.
           test "$ACTIONLINT" = success
@@ -239,3 +259,4 @@ jobs:
           test "$STD_TEST_SUITE" = success
           test "$LAYERING" = success
           test "$GCOVR" = success
+          test "$COVERAGE" = success

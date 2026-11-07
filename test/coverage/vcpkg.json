@@ -1,0 +1,9 @@
+{
+  "name": "cpp-ci-coverage-fixture",
+  "version-string": "0",
+  "description": "A library-shaped project for self-check.yml to run coverage.yml against",
+  "license": "BSL-1.0",
+  "dependencies": [
+    "boost-test"
+  ]
+}

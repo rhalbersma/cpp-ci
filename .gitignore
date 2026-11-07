@@ -1,1 +1,3 @@
 __pycache__/
+/test/coverage/build/
+/test/coverage/vcpkg_installed/
