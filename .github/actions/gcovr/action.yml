@@ -16,8 +16,14 @@ inputs:
   gcov:
     description: The gcov matching the compiler that built the tests.
     required: true
+  working_directory:
+    description: >
+      The source root the gate runs from, as gcovr.sh expects: report paths,
+      the exclude patterns and build_dir are all relative to it.
+    required: false
+    default: "."
   build_dir:
-    description: Where coverage.txt and coverage.xml are written.
+    description: Where coverage.txt and coverage.xml are written, relative to working_directory.
     required: false
     default: build
   exclude:
@@ -37,6 +43,7 @@ runs:
   using: composite
   steps:
     - shell: bash
+      working-directory: ${{ inputs.working_directory }}
       env:
         GCOV: ${{ inputs.gcov }}
         BUILD_DIR: ${{ inputs.build_dir }}
