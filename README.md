@@ -812,8 +812,8 @@ caller rather than this repository.
 | :----- | :------ |
 | `toolchain` | Resolve rungs to compilers: one rung, or a whole strategy matrix |
 | `apt-retry` | Set the retry key apt actually reads, and drop the image's unused Microsoft source, once per job |
-| `install-gcc` | A GCC release from the toolchain PPA, or from the Launchpad librarian when the PPA's mirror is down; or the trunk snapshot |
-| `install-clang` | A Clang from apt.llvm.org, optionally with libc++ |
+| `install-gcc` | A GCC release from the toolchain PPA, or from the Launchpad librarian when the PPA's mirror is down; or the trunk snapshot. The one script CI and a local install share |
+| `install-clang` | A Clang from apt.llvm.org, optionally with libc++, clang-format and clang-tidy. The one script CI and a local install share |
 | `install-android-ndk` | One Android NDK release from Google, checked against its published SHA-1, for every API level |
 | `vcpkg-setup` | Check out and bootstrap vcpkg at this repository's pinned commit, in place of the runner image's |
 | `vcpkg-overlay` | Locate the overlay triplets, which live here rather than in each caller |
@@ -828,8 +828,11 @@ Anything a workflow needs to read from here therefore has to arrive as an
 action: an action is fetched from its own repository and `GITHUB_ACTION_PATH`
 points at it. That is why the overlay triplets are an action rather than eight
 files copied into four repositories, and why the clang-tidy passes, the
-coverage gate and the layering check are scripts behind actions: a developer
-then runs before pushing the very scripts CI runs.
+coverage gate, the layering check and the compiler installs are scripts behind
+actions: a developer then runs before pushing the very scripts CI runs, and
+installs the very compilers CI builds with. `install-gcc.sh` and
+`install-clang.sh` take the actions' inputs as environment variables, which each
+script's header lists.
 
 `config-drift` is the one a caller runs on a schedule rather than on its pull
 requests. A family of repositories that means to share its configuration names
