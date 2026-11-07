@@ -822,6 +822,7 @@ caller rather than this repository.
 | `gcovr` | The coverage gate's gcovr run and its exclusions, the one script CI and a local run share |
 | `layering` | The header layering check over a caller's folders, read from the `#include` lines, the one script CI and a local run share |
 | `config-drift` | A report of where a group of repositories disagree on the files they share, and which commit of this repository each pins |
+| `compile-budget` | What each header costs to include on its own under Clang, and a gate on its growth against a base tree |
 
 Anything a workflow needs to read from here therefore has to arrive as an
 action: an action is fetched from its own repository and `GITHUB_ACTION_PATH`
@@ -854,6 +855,18 @@ jobs:
           repositories: rhalbersma/xstd-misc rhalbersma/xstd-ints rhalbersma/xstd-bits
           files: .clang-format .clang-tidy CMakePresets.json .gitignore codecov.yml .github/dependabot.yml
 ```
+
+`compile-budget` compiles each header matching a glob on its own, as a
+translation unit holding only its `#include`, under Clang with `-ftime-trace`.
+It counts three things per header: the preprocessed lines, the class template
+instantiations and the function template instantiations. The counts are
+deterministic, the same on every run of the same tree and compiler, so the
+action can fail a pull request whose counts grow by more than a threshold, 5%
+by default, against a base tree the caller checks out beside the head. It also
+fails on a header that stops compiling on its own. The frontend's time is
+reported beside the counts and never gates: on a shared runner it moves by a
+tenth from run to run, and a gate on it would fail at random. With no base
+tree the action reports the head alone, costliest header first.
 
 ## Conventions
 

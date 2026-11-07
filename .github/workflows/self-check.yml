@@ -241,6 +241,47 @@ jobs:
           echo "drifted: $DRIFTED"
           test "$DRIFTED" = ".github/actions/gcovr/action.yml .github/actions/gcovr/test_gcovr.py"
 
+  # The compile budget's comparison and trace reading on data held in memory,
+  # and its measurement of a small header tree under the stable rung's Clang.
+  # Then the action itself, on test/coverage's header against the same tree as
+  # its base: the counts are deterministic, so nothing may change and it must
+  # pass. Nothing else here proves the counts repeat on a runner.
+  compile-budget:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/apt-retry
+
+      - name: Resolve the stable rung
+        id: toolchain
+        uses: ./.github/actions/toolchain
+        with:
+          toolchain: clang
+          tier: stable
+
+      - name: Install Clang
+        uses: ./.github/actions/install-clang
+        with:
+          version: ${{ steps.toolchain.outputs.version }}
+          llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
+
+      - name: Run the compile budget's tests
+        env:
+          VERSION: ${{ steps.toolchain.outputs.version }}
+        run: CXX="clang++-${VERSION}" python3 -I .github/actions/compile-budget/test_budget.py -v
+
+      - name: Measure test/coverage against itself
+        uses: ./.github/actions/compile-budget
+        with:
+          root: test/coverage/include
+          base_root: test/coverage/include
+          cxx: clang++-${{ steps.toolchain.outputs.version }}
+          flags: -std=c++20
+          repeat: "1"
+
   # One check name that does not move, for branch protection to require -- the
   # same role the "all" job has in gcc.yml and its siblings.
   #
@@ -256,7 +297,7 @@ jobs:
     # nothing about what it gates. This is a display name chosen to match
     # them, not a reusable-workflow path.
     name: self-check / all
-    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr, coverage, config-drift ]
+    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr, coverage, config-drift, compile-budget ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
     # still runs when a leg fails, which is the whole job.
@@ -273,6 +314,7 @@ jobs:
           GCOVR: ${{ needs.gcovr.result }}
           COVERAGE: ${{ needs.coverage.result }}
           CONFIG_DRIFT: ${{ needs.config-drift.result }}
+          COMPILE_BUDGET: ${{ needs.compile-budget.result }}
         run: |
           set -euo pipefail
           echo "actionlint: $ACTIONLINT"
@@ -283,6 +325,7 @@ jobs:
           echo "gcovr: $GCOVR"
           echo "coverage: $COVERAGE"
           echo "config-drift: $CONFIG_DRIFT"
+          echo "compile-budget: $COMPILE_BUDGET"
           # Only success passes. A skipped leg is a leg that did not run, which
           # is exactly what this is here to catch.
           test "$ACTIONLINT" = success
@@ -293,3 +336,4 @@ jobs:
           test "$GCOVR" = success
           test "$COVERAGE" = success
           test "$CONFIG_DRIFT" = success
+          test "$COMPILE_BUDGET" = success
