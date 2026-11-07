@@ -158,6 +158,27 @@ jobs:
       - name: Run the layering check's unit tests
         run: python3 -I .github/actions/layering/test_layering.py -v
 
+  # tools/ci_local.py, the local runner, on fixture stubs: the legs it derives
+  # from a caller's workflows, their names and order, the inputs and tiers it
+  # resolves, and the command lines it builds. No compiler runs. PyYAML comes
+  # at the pin the pin check installs, into a virtual environment, which
+  # python3 -I still reads where it ignores the user's site-packages.
+  ci-local:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install PyYAML at its pin
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r .github/scripts/requirements.txt
+
+      - name: Run the local runner's unit tests
+        run: '"$RUNNER_TEMP/venv/bin/python" -I tools/test_ci_local.py -v'
+
   # tools/setup-toolchain.sh, the local install of what the workflows build
   # with, on a fresh runner as a developer runs it: every compiler and tool it
   # names must be on PATH and build a program, at the stable rungs alone and
@@ -402,7 +423,7 @@ jobs:
     # nothing about what it gates. This is a display name chosen to match
     # them, not a reusable-workflow path.
     name: self-check / all
-    needs: [ actionlint, codeql, install-gcc, setup-toolchain, std-test-suite, layering, sanitizer-legs, gcovr, coverage, config-drift, compile-budget, compile-budget-workflow ]
+    needs: [ actionlint, codeql, install-gcc, setup-toolchain, std-test-suite, layering, ci-local, sanitizer-legs, gcovr, coverage, config-drift, compile-budget, compile-budget-workflow ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
     # still runs when a leg fails, which is the whole job.
@@ -417,6 +438,7 @@ jobs:
           SETUP_TOOLCHAIN: ${{ needs.setup-toolchain.result }}
           STD_TEST_SUITE: ${{ needs.std-test-suite.result }}
           LAYERING: ${{ needs.layering.result }}
+          CI_LOCAL: ${{ needs.ci-local.result }}
           SANITIZER_LEGS: ${{ needs.sanitizer-legs.result }}
           GCOVR: ${{ needs.gcovr.result }}
           COVERAGE: ${{ needs.coverage.result }}
@@ -431,6 +453,7 @@ jobs:
           echo "setup-toolchain: $SETUP_TOOLCHAIN"
           echo "std-test-suite: $STD_TEST_SUITE"
           echo "layering: $LAYERING"
+          echo "ci-local: $CI_LOCAL"
           echo "sanitizer-legs: $SANITIZER_LEGS"
           echo "gcovr: $GCOVR"
           echo "coverage: $COVERAGE"
@@ -445,6 +468,7 @@ jobs:
           test "$SETUP_TOOLCHAIN" = success
           test "$STD_TEST_SUITE" = success
           test "$LAYERING" = success
+          test "$CI_LOCAL" = success
           test "$SANITIZER_LEGS" = success
           test "$GCOVR" = success
           test "$COVERAGE" = success
