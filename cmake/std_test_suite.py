@@ -920,8 +920,28 @@ def rewrite(text: str, path: str, digest: str, mapping: Mapping, errors: list[st
         else:
             text = text.replace(entry["from"], entry["to"])
     prelude = "".join(f"#include <{header}>\n" for header in mapping.include)
-    # The prelude keeps the upstream line numbers, so a diagnostic points at the line the suite wrote.
-    return (prelude + "#line 1\n" + text) if prelude else text, applied, text != before
+    if not prelude:
+        return text, applied, text != before
+    # The prelude goes after the macros a test defines to configure its standard library, as the MSVC STL's
+    # _HAS_ and _SILENCE_ switches, which take effect only before the library's first header. Its #line keeps the
+    # upstream line numbers, so a diagnostic points at the line the suite wrote.
+    lines = text.split("\n")
+    k = configuration_lines(lines)
+    return "\n".join([*lines[:k], prelude + f"#line {k + 1}", *lines[k:]]), applied, text != before
+
+
+def configuration_lines(lines: list[str]) -> int:
+    """How many of a test's leading lines come before its first header: comments, blank lines, #define and #undef."""
+    count = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        if re.match(r"#\s*(define|undef)\b", stripped):
+            count = i + 1
+            continue
+        break
+    return count
 
 
 # ---------------------------------------------------------------------------
