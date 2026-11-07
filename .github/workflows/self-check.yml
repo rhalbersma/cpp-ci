@@ -193,11 +193,29 @@ jobs:
           VERSION: ${{ steps.toolchain.outputs.version }}
         run: CXX="g++-${VERSION}" GCOV="gcov-${VERSION}" python3 -I .github/actions/gcovr/test_gcovr.py -v
 
+  # coverage.yml itself, as a caller's stub calls it, on test/coverage: a
+  # header-only library whose Boost.Test suite vcpkg installs. The gate's own
+  # rules are the gcovr leg's; this one catches the wiring around them -- the
+  # configure flags, the install, the report steps' conditions -- which
+  # actionlint reads but nothing runs. Codecov does not know this repository,
+  # so the upload is off.
+  #
+  # id-token because coverage.yml asks for it at workflow level, for the
+  # upload, and a called workflow cannot exceed its caller's grant.
+  coverage:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/coverage.yml
+    with:
+      source_dir: test/coverage
+      codecov: false
+
   # The drift report's grouping, pin reading and rendering on repositories held
   # in memory, then the action itself over the REST API. cpp-ci names no
-  # caller, so the repositories it compares are this one at two fixed commits,
-  # either side of #104: .gitignore agrees, gcovr's action.yml differs, and
-  # test_gcovr.py exists only in the newer, so exactly two files must drift.
+  # caller, so it compares this repository with itself, at the merges of #102
+  # and #104: .gitignore agrees, gcovr's action.yml differs, and test_gcovr.py
+  # exists only in the newer, so exactly two files must drift.
   config-drift:
     runs-on: ubuntu-24.04
     steps:
@@ -238,7 +256,7 @@ jobs:
     # nothing about what it gates. This is a display name chosen to match
     # them, not a reusable-workflow path.
     name: self-check / all
-    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr, config-drift ]
+    needs: [ actionlint, codeql, install-gcc, std-test-suite, layering, gcovr, coverage, config-drift ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
     # still runs when a leg fails, which is the whole job.
@@ -253,6 +271,7 @@ jobs:
           STD_TEST_SUITE: ${{ needs.std-test-suite.result }}
           LAYERING: ${{ needs.layering.result }}
           GCOVR: ${{ needs.gcovr.result }}
+          COVERAGE: ${{ needs.coverage.result }}
           CONFIG_DRIFT: ${{ needs.config-drift.result }}
         run: |
           set -euo pipefail
@@ -262,6 +281,7 @@ jobs:
           echo "std-test-suite: $STD_TEST_SUITE"
           echo "layering: $LAYERING"
           echo "gcovr: $GCOVR"
+          echo "coverage: $COVERAGE"
           echo "config-drift: $CONFIG_DRIFT"
           # Only success passes. A skipped leg is a leg that did not run, which
           # is exactly what this is here to catch.
@@ -271,4 +291,5 @@ jobs:
           test "$STD_TEST_SUITE" = success
           test "$LAYERING" = success
           test "$GCOVR" = success
+          test "$COVERAGE" = success
           test "$CONFIG_DRIFT" = success
