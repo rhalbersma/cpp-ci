@@ -29,6 +29,13 @@ inputs:
       always did.
     required: false
     default: ""
+  working_directory:
+    description: >
+      Where to run the install. vcpkg finds the manifest by searching it and
+      its parents for vcpkg.json, so this is the directory of a project whose
+      root is not the checkout's.
+    required: false
+    default: "."
 
 runs:
   using: composite
@@ -39,6 +46,7 @@ runs:
     # jobs speak.
     - if: runner.os != 'Windows'
       shell: bash
+      working-directory: ${{ inputs.working_directory }}
       env:
         TRIPLET: ${{ inputs.triplet }}
         OVERLAY_TRIPLETS: ${{ inputs.overlay_triplets }}
@@ -78,6 +86,7 @@ runs:
 
     - if: runner.os == 'Windows'
       shell: pwsh
+      working-directory: ${{ inputs.working_directory }}
       env:
         TRIPLET: ${{ inputs.triplet }}
         OVERLAY_TRIPLETS: ${{ inputs.overlay_triplets }}
