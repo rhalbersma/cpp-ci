@@ -497,6 +497,16 @@ upper-case name ending in `_ASSERT` such as `XSTD_BITS_ASSERT(`, is excluded fro
 both counts: its false arm is the one a passing suite never takes. An assert
 written anywhere else on its line is counted.
 
+The gate is [`gcovr.sh`](.github/actions/gcovr/gcovr.sh), the script both the
+workflow and a developer's local run call, and `self-check.yml` tests it on a
+library-shaped fixture built with the stable rung's GCC. An uncovered line or
+branch must fail it, each on its own threshold. An excluded path must stay out,
+the default excludes must read as regular expressions, and the reports must land
+in `BUILD_DIR`. Every exclusion has a case it is needed for: an assert, a
+project assert macro, an out-of-line `= default`, the closing brace of a
+function returning a local, an allocation's throw branch, and a template whose
+two instantiations each take one branch. Removing any one of them fails the test.
+
 It sits on the stable `gcc` rung because what it measures is the code rather
 than the toolchain, and because `gcov` has to match the compiler that produced
 the data. Codecov's two checks, where a caller enables them, are that caller's
@@ -1016,18 +1026,15 @@ apt.llvm.org (does the next suite exist), the WinLibs releases API, and the
 actions; nothing watches compilers, so the ladder advances only when someone
 notices.
 
-### A test for `coverage.yml`
+### Running `coverage.yml` end to end
 
-`self-check.yml` lints workflows but never runs one, and `coverage.yml` carries
-the most logic here: the `exclude` split, the line and branch exclusion
-patterns, the thresholds, and three consumers of the report files. Any of them
-can break in a way that stays green, by measuring something other than what 100%
-is meant to mean. The fix is a minimal C++ fixture in this repository, one
-header and one Boost.Test file that covers it, and a `self-check.yml` leg
-running `coverage.yml` against it, asserting that the fixture reaches 100%, that
-an uncovered branch makes it **fail**, that an excluded path stays excluded, and
-that the reports land where the later steps read them. The failing case matters
-most: a threshold that never fires is the defect such a test exists to catch.
+`self-check.yml` tests the coverage gate, `gcovr.sh`, on a fixture, but runs
+`coverage.yml` itself nowhere: the configure step's `--coverage` flags, the
+vcpkg install and the report steps' conditions are checked only by `actionlint`.
+Running the workflow on a fixture needs a source directory input, since it
+configures the caller's checkout root, and a fixture with a Boost.Test
+dependency for vcpkg to install. The gate is where a wrong pattern or threshold
+would silently change what 100% means; the wiring around it fails loudly.
 
 ### Drift between callers
 

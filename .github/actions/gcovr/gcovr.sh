@@ -59,12 +59,16 @@ done
 # route - which the same line, run in the unit next door, does not redeem. That
 # is not a gap in the tests, and closing it means re-running identical code
 # once per caller.
+#
+# gcovr matches each pattern from the start of the line, as Python's re.match
+# does, so a pattern for text that follows code on its line begins with .*:
+# "= default;" ends a declaration rather than starting a line.
 gcovr --root . "${search_paths[@]}" \
         --gcov-executable "${gcov}" \
         --merge-lines \
         "${excludes[@]}" \
         --exclude-lines-by-pattern '^\s*(assert|[A-Z][A-Z0-9_]*_ASSERT)\(' \
-        --exclude-lines-by-pattern '=\s*default;' \
+        --exclude-lines-by-pattern '^\s*.*=\s*default;' \
         --exclude-lines-by-pattern '\s*\}\s*$' \
         --exclude-branches-by-pattern '^\s*(assert|[A-Z][A-Z0-9_]*_ASSERT)\(' \
         --exclude-branches-by-pattern '^\s*.*=\s*default;' \
