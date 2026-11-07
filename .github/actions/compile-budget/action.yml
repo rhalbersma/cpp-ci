@@ -1,0 +1,97 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Compile budget
+description: >
+  Measure what each header costs to include on its own, under Clang, and
+  compare a base tree with the head: preprocessed lines, class template
+  instantiations and function template instantiations, which are
+  deterministic and so can gate, beside the frontend's time, which moves by a
+  tenth from run to run and is reported only. A count that grows by more than
+  the threshold fails the step, as does a header that stops compiling on its
+  own. The measurement lives in budget.py beside this action, which a
+  developer can run as well. Expects the Clang named by cxx on PATH, as
+  install-clang leaves it; the base tree is the caller's to check out.
+
+inputs:
+  root:
+    description: The include directory of the head tree; headers are named relative to it.
+    required: true
+  base_root:
+    description: >
+      The same include directory in the base tree, typically the merge base
+      checked out beside the head. Empty measures the head and reports it,
+      with nothing to compare against and nothing to fail.
+    required: false
+    default: ""
+  glob:
+    description: Which headers under root to measure, as a pathlib glob.
+    required: false
+    default: "**/*.hpp"
+  cxx:
+    description: The Clang driver to compile with.
+    required: false
+    default: clang++
+  flags:
+    description: >
+      Whitespace-separated compiler flags for every translation unit: the
+      standard, include directories of the dependencies, definitions. The root
+      is added as an include directory of its own.
+    required: false
+    default: "-std=c++2c"
+  repeat:
+    description: Runs per header; the reported time is the least of them.
+    required: false
+    default: "3"
+  threshold:
+    description: Percentage growth of any count above which the step fails.
+    required: false
+    default: "5"
+  min_delta:
+    description: Growth smaller than this many, in absolute terms, never fails.
+    required: false
+    default: "1"
+  out_dir:
+    description: Where head.json, and base.json when there is a base, are written.
+    required: false
+    default: compile-budget
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        ROOT: ${{ inputs.root }}
+        BASE_ROOT: ${{ inputs.base_root }}
+        GLOB: ${{ inputs.glob }}
+        CXX_DRIVER: ${{ inputs.cxx }}
+        FLAGS: ${{ inputs.flags }}
+        REPEAT: ${{ inputs.repeat }}
+        THRESHOLD: ${{ inputs.threshold }}
+        MIN_DELTA: ${{ inputs.min_delta }}
+        OUT_DIR: ${{ inputs.out_dir }}
+      run: |
+        set -euo pipefail
+        script="$GITHUB_ACTION_PATH/budget.py"
+        read -ra flags <<< "$FLAGS"
+        flag_args=()
+        for flag in "${flags[@]}"; do
+          flag_args+=("--flag=$flag")
+        done
+        mkdir -p "$OUT_DIR"
+        measure() {
+          python3 -I "$script" measure --root "$1" --glob "$GLOB" --cxx "$CXX_DRIVER" \
+            --repeat "$REPEAT" --out "$2" "${flag_args[@]}"
+        }
+        measure "$ROOT" "$OUT_DIR/head.json"
+        if [ -z "$BASE_ROOT" ]; then
+          python3 -I "$script" report "$OUT_DIR/head.json"
+          exit 0
+        fi
+        # A base header that does not compile is the base's problem, not this
+        # change's: it is recorded, and the comparison treats it as new.
+        measure "$BASE_ROOT" "$OUT_DIR/base.json" || true
+        python3 -I "$script" compare "$OUT_DIR/base.json" "$OUT_DIR/head.json" \
+          --threshold "$THRESHOLD" --min-delta "$MIN_DELTA"
