@@ -1,0 +1,66 @@
+#          Copyright Rein Halbersma 2026.
+# Distributed under the Boost Software License, Version 1.0.
+#    (See accompanying file LICENSE_1_0.txt or copy at
+#          http://www.boost.org/LICENSE_1_0.txt)
+
+name: Config drift
+description: >
+  Report whether a group of repositories agree on the files they share, and
+  which commit of this repository each one pins: a per-file table in the step
+  summary, the newest variant of each drifted file named and every other one
+  shown as a diff against it. A report, never a gate: drift, an absent file
+  and a file that cannot be read are all lines in the report, and only a
+  malformed invocation fails. The report lives in drift.py beside this action,
+  which a developer can run as well. Reads over the REST API, so nothing is
+  checked out.
+
+inputs:
+  repositories:
+    description: >
+      Whitespace-separated owner/name, each optionally @ref for a branch, tag
+      or commit other than the default branch. At least two.
+    required: true
+  files:
+    description: Whitespace-separated paths to compare across the repositories.
+    required: true
+  pinned_repository:
+    description: >
+      The owner/name whose pins in each repository's .github/workflows to list.
+      Defaults to the repository serving this action; "none" lists no pins.
+    required: false
+    default: ""
+  token:
+    description: >
+      Token for the REST API. The default reads public repositories; a private
+      one needs a token that can read its contents.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  drifted:
+    description: The files on which the repositories disagree, space-separated.
+    value: ${{ steps.report.outputs.drifted }}
+
+runs:
+  using: composite
+  steps:
+    - id: report
+      shell: bash
+      env:
+        REPOSITORIES: ${{ inputs.repositories }}
+        FILES: ${{ inputs.files }}
+        PINNED_INPUT: ${{ inputs.pinned_repository }}
+        ACTION_REPOSITORY: ${{ github.action_repository }}
+        GITHUB_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        # github.action_repository is empty when the action is run from a
+        # local path, as self-check.yml runs it; the checkout is then the
+        # repository serving it.
+        case "$PINNED_INPUT" in
+          none) PINNED_REPOSITORY="" ;;
+          "")   PINNED_REPOSITORY="${ACTION_REPOSITORY:-$GITHUB_REPOSITORY}" ;;
+          *)    PINNED_REPOSITORY="$PINNED_INPUT" ;;
+        esac
+        export PINNED_REPOSITORY
+        python3 -I "$GITHUB_ACTION_PATH/drift.py"

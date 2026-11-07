@@ -796,7 +796,7 @@ verifies. A caller wanting it enforced has to drop the rung instead.
 
 ## Actions
 
-Nine composite actions, which exist because a reusable workflow checks out the
+The composite actions exist because a reusable workflow checks out the
 caller rather than this repository.
 
 | Action | Purpose |
@@ -812,6 +812,7 @@ caller rather than this repository.
 | `clang-tidy` | clang-tidy's passes over a configured build, the one script CI and a local run share |
 | `gcovr` | The coverage gate's gcovr run and its exclusions, the one script CI and a local run share |
 | `layering` | The header layering check over a caller's folders, read from the `#include` lines, the one script CI and a local run share |
+| `config-drift` | A report of where a group of repositories disagree on the files they share, and which commit of this repository each pins |
 
 Anything a workflow needs to read from here therefore has to arrive as an
 action: an action is fetched from its own repository and `GITHUB_ACTION_PATH`
@@ -819,6 +820,31 @@ points at it. That is why the overlay triplets are an action rather than eight
 files copied into four repositories, and why the clang-tidy passes, the
 coverage gate and the layering check are scripts behind actions: a developer
 then runs before pushing the very scripts CI runs.
+
+`config-drift` is the one a caller runs on a schedule rather than on its pull
+requests. A family of repositories that means to share its configuration names
+the repositories and the files, and gets a table per file in the step summary.
+The table groups the repositories by content and names the newest variant, by
+the date of the last commit touching the file. Every other variant is shown as
+a diff against it, beside the commits of this repository that each one pins.
+It is a report and never fails on what it finds: a difference with a reason
+gets that reason in a one-line comment in the file, and any other difference
+gets removed. cpp-ci holds no caller list of its own, so the list lives with the
+family:
+
+```yaml
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+jobs:
+  drift:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: rhalbersma/cpp-ci/.github/actions/config-drift@<sha> # <tag>
+        with:
+          repositories: rhalbersma/xstd-misc rhalbersma/xstd-ints rhalbersma/xstd-bits
+          files: .clang-format .clang-tidy CMakePresets.json .gitignore codecov.yml .github/dependabot.yml
+```
 
 ## Conventions
 
@@ -1035,20 +1061,6 @@ Running the workflow on a fixture needs a source directory input, since it
 configures the caller's checkout root, and a fixture with a Boost.Test
 dependency for vcpkg to install. The gate is where a wrong pattern or threshold
 would silently change what 100% means; the wiring around it fails loudly.
-
-### Drift between callers
-
-The callers' configuration should be identical, differing only where a library
-or test dependency requires it, and the difference that does exist should be
-declared rather than incidental. Some differences are deliberate and recorded so
-they are not reopened: `HeaderFilterRegex` naming each library's own path, a
-check suppressed for a stated reason in one caller, `exclude:` naming the tree
-each caller ships, and each `vcpkg.json`. What would keep the rest from
-returning is a report, not enforcement: a `self-check.yml` leg on the weekly
-schedule listing, per shared configuration file, whether the callers agree, in
-the step summary and never failing. A caller with a real local need should not
-have to come here first, but drift should have to be looked at once and then
-explained in the file or removed.
 
 ### Shared build and documentation
 
