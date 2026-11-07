@@ -507,6 +507,15 @@ project assert macro, an out-of-line `= default`, the closing brace of a
 function returning a local, an allocation's throw branch, and a template whose
 two instantiations each take one branch. Removing any one of them fails the test.
 
+`self-check.yml` also runs `coverage.yml` itself, as a stub calls it, on
+[`test/coverage`](test/coverage): a header-only library with a Boost.Test suite
+that vcpkg installs, covered in full. That leg catches the wiring around the
+gate rather than the gate: the configure flags, the install, and the report
+steps' conditions. Two inputs exist for it and serve any caller like it.
+`source_dir` names a project root below the checkout's, to which the build
+tree, the reports and `exclude` are then relative, and `codecov: false` skips
+the upload for a repository Codecov does not know.
+
 It sits on the stable `gcc` rung because what it measures is the code rather
 than the toolchain, and because `gcov` has to match the compiler that produced
 the data. Codecov's two checks, where a caller enables them, are that caller's
@@ -1025,16 +1034,6 @@ apt.llvm.org (does the next suite exist), the WinLibs releases API, and the
 `actions/runner-images` releases for Visual Studio and Xcode. Dependabot watches
 actions; nothing watches compilers, so the ladder advances only when someone
 notices.
-
-### Running `coverage.yml` end to end
-
-`self-check.yml` tests the coverage gate, `gcovr.sh`, on a fixture, but runs
-`coverage.yml` itself nowhere: the configure step's `--coverage` flags, the
-vcpkg install and the report steps' conditions are checked only by `actionlint`.
-Running the workflow on a fixture needs a source directory input, since it
-configures the caller's checkout root, and a fixture with a Boost.Test
-dependency for vcpkg to install. The gate is where a wrong pattern or threshold
-would silently change what 100% means; the wiring around it fails loudly.
 
 ### Drift between callers
 
