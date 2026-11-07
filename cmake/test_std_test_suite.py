@@ -212,6 +212,24 @@ class Msvc(unittest.TestCase):
             self.assertEqual(kind, "skip")
             self.assertIn("msvc_stdlib_force_include.h", reason)
 
+    def test_death_test(self):
+        # GH_005090_stl_hardening: death tests through <crtdbg.h>, which only the MSVC runtime has.
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            (root / "tests" / "GH_2").mkdir(parents=True)
+            (root / "tests" / "GH_2" / "env.lst").write_text('PM_CL="/EHsc /std:c++latest"\n')
+            text = '#include <test_death.hpp>\n'
+            kind, reason, _, _ = sts.msvc_classify("tests/GH_2/test.cpp", text, GCC, root)
+            self.assertEqual(kind, "skip")
+            self.assertIn("crtdbg.h", reason)
+            self.assertEqual(sts.msvc_classify("tests/GH_2/test.cpp", text, MSVC, root)[0], "run")
+
+    def test_shim(self):
+        # is_permissive.hpp includes <yvals_core.h> for _INLINE_VAR; the tests themselves read _HAS_CXX23.
+        text = (sts.MSVC_STL_SHIM / "yvals_core.h").read_text()
+        for macro in ("_INLINE_VAR", "_HAS_CXX17", "_HAS_CXX20", "_HAS_CXX23", "_HAS_CXX26"):
+            self.assertIn(f"#define {macro} ", text)
+
     def test_stacktrace_link(self):
         # P0881R7_stacktrace: libstdc++ before 16 keeps std::stacktrace in libstdc++exp.
         with tempfile.TemporaryDirectory() as root:
