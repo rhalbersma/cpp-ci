@@ -123,7 +123,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@ac559274ecaa4fd764d3af9f5cd25fc424c18d9a
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@d0f1d295d59167c75530aa657dc5f77e56545b16
 
       # From the image's own archive, so no source is added, and named at its
       # exact candidate version for the reason s390x.yml gives.
@@ -154,7 +154,7 @@ jobs:
           fi
 
       - name: Install the Android NDK
-        uses: rhalbersma/cpp-ci/.github/actions/install-android-ndk@ac559274ecaa4fd764d3af9f5cd25fc424c18d9a
+        uses: rhalbersma/cpp-ci/.github/actions/install-android-ndk@d0f1d295d59167c75530aa657dc5f77e56545b16
         with:
           version: ${{ inputs.ndk_version }}
           sha1: ${{ inputs.ndk_sha1 }}
@@ -164,7 +164,7 @@ jobs:
       # the ports and the tests share one compiler, one libc++ and one level.
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@ac559274ecaa4fd764d3af9f5cd25fc424c18d9a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@d0f1d295d59167c75530aa657dc5f77e56545b16
 
       - name: Report toolchain versions
         run: |
@@ -182,10 +182,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@ac559274ecaa4fd764d3af9f5cd25fc424c18d9a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@d0f1d295d59167c75530aa657dc5f77e56545b16
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@ac559274ecaa4fd764d3af9f5cd25fc424c18d9a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@d0f1d295d59167c75530aa657dc5f77e56545b16
         with:
           triplet: ${{ env.TRIPLET }}
           features: ${{ inputs.vcpkg_features }}

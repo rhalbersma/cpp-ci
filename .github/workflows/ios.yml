@@ -117,7 +117,7 @@ jobs:
 
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@ac559274ecaa4fd764d3af9f5cd25fc424c18d9a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@d0f1d295d59167c75530aa657dc5f77e56545b16
 
       # The newest runtime of the leg's release, on the newest iPhone that
       # runtime supports, booted before the build so it is ready by the tests.
@@ -163,10 +163,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@ac559274ecaa4fd764d3af9f5cd25fc424c18d9a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@d0f1d295d59167c75530aa657dc5f77e56545b16
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@ac559274ecaa4fd764d3af9f5cd25fc424c18d9a
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@d0f1d295d59167c75530aa657dc5f77e56545b16
         with:
           triplet: ${{ env.TRIPLET }}
           features: ${{ inputs.vcpkg_features }}
