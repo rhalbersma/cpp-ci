@@ -253,7 +253,7 @@ jobs:
             "$HOME/.local/share/cpp-ci/vcpkg/vcpkg" version | head -1
           else
             # Neither is installed under --stable.
-            ! command -v "$HOME/.local/bin/actionlint"
+            [ ! -e "$HOME/.local/bin/actionlint" ]
             [ ! -e "$HOME/.local/share/cpp-ci/vcpkg/vcpkg" ]
           fi
           if [ "$MODE" = stable ]; then
