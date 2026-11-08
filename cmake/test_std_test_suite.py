@@ -555,5 +555,25 @@ class Registration(unittest.TestCase):
                 self.assertEqual(sts.main(argv), 1, support)
 
 
+class WriteIfChanged(unittest.TestCase):
+    # The MSVC STL ships some tests with CRLF line endings and backslash-continued macros, as Dev11_0437519 does.
+    def test_keeps_each_line_ending(self):
+        text = "#define F(x) \\\r\n    (x)\r\n#line 5\nint i = F(1);\r\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "test.compile.pass.cpp"
+            sts.write_if_changed(path, text)
+            self.assertEqual(path.read_bytes(), text.encode("utf-8"))
+
+    def test_leaves_an_unchanged_copy_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "test.cpp"
+            sts.write_if_changed(path, "int i;\r\n")
+            stamp = path.stat().st_mtime_ns
+            sts.write_if_changed(path, "int i;\r\n")
+            self.assertEqual(path.stat().st_mtime_ns, stamp)
+            sts.write_if_changed(path, "int j;\r\n")
+            self.assertEqual(path.read_bytes(), b"int j;\r\n")
+
+
 if __name__ == "__main__":
     unittest.main()

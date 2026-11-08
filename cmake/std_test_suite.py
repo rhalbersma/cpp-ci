@@ -885,6 +885,16 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def write_if_changed(path: pathlib.Path, text: str) -> None:
+    """Write a rewritten source as UTF-8 bytes, so its own line endings reach the compiler unchanged.
+
+    The source was read as bytes, so a CRLF file arrives here with its carriage returns; text mode on Windows would
+    turn each into CR CR LF, and a backslash before a lone CR no longer continues a macro."""
+    data = text.encode("utf-8")
+    if not path.is_file() or path.read_bytes() != data:
+        path.write_bytes(data)
+
+
 def rewrite(text: str, path: str, digest: str, mapping: Mapping, errors: list[str], lenient: bool = False, config: Config | None = None) -> tuple[str, list[str], bool]:
     """The build-tree copy of one test, its exceptions applied, and whether any spelling rewrite changed it.
 
@@ -1071,8 +1081,7 @@ def rewrite_support(suite: Suite, tree: pathlib.Path, out: pathlib.Path, mapping
         name = path.rsplit("/", 1)[-1] if beside else path.removeprefix(root + "/")
         copy = out / "tests" / path if beside else out / "support" / name
         copy.parent.mkdir(parents=True, exist_ok=True)
-        if not copy.is_file() or copy.read_text() != rewritten:
-            copy.write_text(rewritten)
+        write_if_changed(copy, rewritten)
         records.append({"path": path, "sha256": digest, "name": name, "beside": beside, "exceptions": applied})
     return records
 
@@ -1161,8 +1170,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         source = sources / test.path
         source.parent.mkdir(parents=True, exist_ok=True)
-        if not source.is_file() or source.read_text() != rewritten:
-            source.write_text(rewritten)
+        write_if_changed(source, rewritten)
         target = target_name(name, suite, test.path)
         diagnostics = ""
         if test.kind == "diagnose":
