@@ -246,12 +246,16 @@ jobs:
           stable=$(jq -r '.clang.stable.version' "$table")
           "clang++-$stable" -std=c++23 -stdlib=libc++ hello.cpp -o hello && ./hello
           "clang-format-$stable" --version
+          "$HOME/.local/bin/gcovr" --version | head -1
           if [ "$MODE" != stable ]; then
             "g++-$(jq -r '.gcc.stable.version' "$table")" -m32 -std=c++23 hello.cpp -o hello && ./hello
+            "$HOME/.local/bin/actionlint" --version
+            "$HOME/.local/share/cpp-ci/vcpkg/vcpkg" version | head -1
+          else
+            # Neither is installed under --stable.
+            [ ! -e "$HOME/.local/bin/actionlint" ]
+            [ ! -e "$HOME/.local/share/cpp-ci/vcpkg/vcpkg" ]
           fi
-          "$HOME/.local/bin/gcovr" --version | head -1
-          "$HOME/.local/bin/actionlint" --version
-          "$HOME/.local/share/cpp-ci/vcpkg/vcpkg" version | head -1
           if [ "$MODE" = stable ]; then
             printf '#define BOOST_TEST_MODULE hello\n#include <boost/test/unit_test.hpp>\nBOOST_AUTO_TEST_CASE(hello) { BOOST_TEST(1 + 1 == 2); }\n' > hello_test.cpp
             "g++-$(jq -r '.gcc.stable.version' "$table")" -std=c++23 hello_test.cpp -lboost_unit_test_framework -o hello_test && ./hello_test
