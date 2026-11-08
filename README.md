@@ -818,13 +818,16 @@ its own workflows pin, so a local build and CI cannot disagree about versions:
 
 ```sh
 tools/setup-toolchain.sh                                   # every rung
-tools/setup-toolchain.sh --stable                          # the stable rungs alone
+tools/setup-toolchain.sh --stable                          # the stable rungs alone, without actionlint and vcpkg
 tools/setup-toolchain.sh --requirements tools/cmake-requirements.txt
 tools/setup-toolchain.sh --stable --boost hash2,test,unordered  # and Boost's libraries
 ```
 
-`--requirements` adds a caller's own hash-pinned requirements, such as the
-CMake its workflows pin. A second run installs nothing. libc++ stays at the
+`--stable` is what a job building on the stable rung alone needs, as a
+caller's codegen or benchmark job does: it leaves out actionlint and vcpkg,
+which such a job never runs, and with them two GitHub downloads that fail
+whenever GitHub's release assets do. `--requirements` adds a caller's own
+hash-pinned requirements, such as the CMake its workflows pin. A second run installs nothing. libc++ stays at the
 stable rung, since apt's libc++ packages exclude one another and CI gives each
 libc++ leg a runner of its own. Apt sources are written as files rather than
 through `add-apt-repository`, which needs the system Python's `apt_pkg`.

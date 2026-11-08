@@ -16,11 +16,15 @@
 #   snapshot under g++-N; clang-tidy for each Clang; clang-format and libc++ at the stable rung alone; and the stable
 #   GCC's 32-bit multilib, for i686 legs;
 #   gcovr, from .github/actions/install-gcovr/requirements.txt, pinned by hash;
-#   actionlint, at the release the actionlint workflow builds, checked against that release's checksums;
-#   vcpkg, at the commit the vcpkg-setup action checks out, in VCPKG_ROOT or ~/.local/share/cpp-ci/vcpkg;
+#   actionlint, at the release the actionlint workflow builds, checked against that release's checksums, outside
+#   --stable;
+#   vcpkg, at the commit the vcpkg-setup action checks out, in VCPKG_ROOT or ~/.local/share/cpp-ci/vcpkg, outside
+#   --stable;
 #   with --boost, the Boost release that commit resolves, built from Boost's CMake release tarball.
 #
-# --stable installs the stable rungs' GCC and Clang alone, with the tools. --requirements installs a caller's own
+# --stable installs the stable rungs' GCC and Clang alone, with gcovr and the requirements files: what a job that builds
+# on that rung needs, without actionlint and vcpkg, which it never runs and which would only add GitHub downloads that
+# can fail. --requirements installs a caller's own
 # hash-pinned requirements file into ~/.local, such as the CMake or the FileCheck its workflows pin; it repeats.
 # --boost names Boost libraries, by the names Boost's CMake build takes, such as hash2,test,unordered; it repeats,
 # and every library named is built by the stable GCC into BOOST_PREFIX, else /usr/local. Outside --stable, where the
@@ -221,7 +225,8 @@ for file in "${requirements[@]}"; do
 done
 
 # actionlint at the release the actionlint workflow builds with go install, here from that release's binary,
-# checked against the checksums file published beside it.
+# checked against the checksums file published beside it. Not under --stable.
+if [ "${stable_only}" -eq 0 ]; then
 actionlint_version="$(sed -n "s/.*inputs\.actionlint_version || '\(v[0-9.]*\)'.*/\1/p" "${ROOT}/.github/workflows/actionlint.yml")"
 : "${actionlint_version:?no actionlint version in .github/workflows/actionlint.yml}"
 if ! "${local_bin}/actionlint" --version 2>/dev/null | grep -qx "${actionlint_version#v}"; then
@@ -236,8 +241,11 @@ if ! "${local_bin}/actionlint" --version 2>/dev/null | grep -qx "${actionlint_ve
         install -m 755 "${scratch}/actionlint" "${local_bin}/actionlint"
         rm -rf "${scratch}"
 fi
+fi
 
-# vcpkg at the commit the vcpkg-setup action checks out, fetched by its SHA without history, and bootstrapped.
+# vcpkg at the commit the vcpkg-setup action checks out, fetched by its SHA without history, and bootstrapped. Not
+# under --stable.
+if [ "${stable_only}" -eq 0 ]; then
 vcpkg_commit="$(sed -n '/^  commit:/,/^  [a-z]/s/^    default: \([0-9a-f]\{40\}\)$/\1/p' "${ROOT}/.github/actions/vcpkg-setup/action.yml")"
 : "${vcpkg_commit:?no vcpkg commit in .github/actions/vcpkg-setup/action.yml}"
 vcpkg_root="${VCPKG_ROOT:-${HOME:-/root}/.local/share/cpp-ci/vcpkg}"
@@ -247,6 +255,7 @@ if [ "$(git -C "${vcpkg_root}" rev-parse HEAD 2>/dev/null)" != "${vcpkg_commit}"
         git -C "${vcpkg_root}" fetch -q --depth 1 https://github.com/microsoft/vcpkg "${vcpkg_commit}"
         git -C "${vcpkg_root}" checkout -q FETCH_HEAD
         "${vcpkg_root}/bootstrap-vcpkg.sh" -disableMetrics > /dev/null
+fi
 fi
 
 # Boost from its CMake release tarball, at the release vcpkg's pinned commit resolves, pinned by the SHA-256 Boost
@@ -306,8 +315,10 @@ for tier in "${clang_rungs[@]}"; do
 done
 "clang-format-${clang_stable}" --version || true
 "${local_bin}/gcovr" --version | head -1 || true
-echo "actionlint $("${local_bin}/actionlint" --version | head -1)" || true
-echo "vcpkg ${vcpkg_commit} in ${vcpkg_root}"
+if [ "${stable_only}" -eq 0 ]; then
+        echo "actionlint $("${local_bin}/actionlint" --version | head -1)" || true
+        echo "vcpkg ${vcpkg_commit} in ${vcpkg_root}"
+fi
 if [ "${#boost_libraries[@]}" -gt 0 ]; then
         for target in "${boost_targets[@]}"; do
                 flags="${target#*:}"
