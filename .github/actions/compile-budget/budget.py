@@ -20,11 +20,13 @@ for information only: on a shared runner it moves by a tenth from run to run.
 
 Usage:
 
-  budget.py measure --root DIR [--glob G] [--cxx clang++] [--flag F]... [--repeat N] --out FILE
+  budget.py measure --root DIR [--glob G] [--exclude P]... [--cxx clang++] [--flag F]... [--repeat N] --out FILE
   budget.py report HEAD
   budget.py compare BASE HEAD [--threshold PERCENT] [--min-delta N]
 
-`measure` writes JSON keyed by header path relative to the root. `report`
+`measure` writes JSON keyed by header path relative to the root. An --exclude
+pattern is matched with fnmatch against that path, so `*` crosses directories:
+`*/detail/*` drops every header under a detail directory. `report`
 prints one tree's table, costliest header first, and never fails. `compare`
 prints a Markdown table of the headers whose counts changed, appends it to
 GITHUB_STEP_SUMMARY on a runner, and exits 1 when any count grew by more than
@@ -35,6 +37,7 @@ listed and never fails; a header gone from HEAD is listed as removed.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import pathlib
@@ -45,8 +48,9 @@ import tempfile
 COUNTS = ("lines", "classes", "functions")
 
 
-def headers(root: pathlib.Path, pattern: str) -> list[str]:
-    return sorted(p.relative_to(root).as_posix() for p in root.glob(pattern) if p.is_file())
+def headers(root: pathlib.Path, pattern: str, exclude: list[str] | None = None) -> list[str]:
+    found = (p.relative_to(root).as_posix() for p in root.glob(pattern) if p.is_file())
+    return sorted(h for h in found if not any(fnmatch.fnmatchcase(h, e) for e in exclude or []))
 
 
 def trace_counts(trace: dict) -> tuple[dict[str, int], float]:
@@ -86,10 +90,10 @@ def measure_one(header: str, cxx: str, flags: list[str], repeat: int, work: path
     return result
 
 
-def measure(root: pathlib.Path, pattern: str, cxx: str, flags: list[str], repeat: int) -> dict[str, dict]:
-    found = headers(root, pattern)
+def measure(root: pathlib.Path, pattern: str, cxx: str, flags: list[str], repeat: int, exclude: list[str] | None = None) -> dict[str, dict]:
+    found = headers(root, pattern, exclude)
     if not found:
-        raise SystemExit(f"::error::no header under {root} matches {pattern}")
+        raise SystemExit(f"::error::no header under {root} matches {pattern} outside the exclusions")
     with tempfile.TemporaryDirectory() as tmp:
         work = pathlib.Path(tmp)
         return {h: measure_one(h, cxx, [*flags, f"-I{root}"], repeat, work) for h in found}
@@ -172,6 +176,7 @@ def main(argv: list[str]) -> int:
     m = sub.add_parser("measure")
     m.add_argument("--root", required=True, type=pathlib.Path)
     m.add_argument("--glob", default="**/*.hpp")
+    m.add_argument("--exclude", action="append", default=[])
     m.add_argument("--cxx", default="clang++")
     m.add_argument("--flag", action="append", default=[])
     m.add_argument("--repeat", type=int, default=3)
@@ -186,7 +191,7 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "measure":
-        result = measure(args.root.resolve(), args.glob, args.cxx, args.flag, max(1, args.repeat))
+        result = measure(args.root.resolve(), args.glob, args.cxx, args.flag, max(1, args.repeat), args.exclude)
         args.out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
         broken = [h for h, r in result.items() if "error" in r]
         for h in broken:
