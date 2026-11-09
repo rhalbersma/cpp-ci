@@ -411,6 +411,8 @@ jobs:
         with:
           root: test/coverage/include
           base_root: test/coverage/include
+          # Patterns that match nothing here: they must reach budget.py unexpanded and leave the header measured.
+          exclude: "*/detail/* */ext/*"
           cxx: clang++-${{ steps.toolchain.outputs.version }}
           flags: -std=c++20
           repeat: "1"

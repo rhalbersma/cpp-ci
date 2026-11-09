@@ -1007,7 +1007,7 @@ jobs:
       - uses: rhalbersma/cpp-ci/.github/actions/config-drift@<sha> # <tag>
         with:
           repositories: rhalbersma/xstd-misc rhalbersma/xstd-ints rhalbersma/xstd-bits
-          files: .clang-format .clang-tidy CMakePresets.json .gitignore codecov.yml .github/dependabot.yml
+          files: .clang-format .clang-tidy CMakePresets.json .gitignore .github/codecov.yml .github/dependabot.yml
 ```
 
 `compile-budget` compiles each header matching a glob on its own, as a
@@ -1020,7 +1020,9 @@ by default, against a base tree the caller checks out beside the head. It also
 fails on a header that stops compiling on its own. The frontend's time is
 reported beside the counts and never gates: on a shared runner it moves by a
 tenth from run to run, and a gate on it would fail at random. With no base
-tree the action reports the head alone, costliest header first.
+tree the action reports the head alone, costliest header first. Its `exclude`
+input leaves out headers the glob matches, by `fnmatch` patterns on the path
+relative to the root, so that `*/detail/*` measures the public headers alone.
 
 [`compile-budget.yml`](.github/workflows/compile-budget.yml) is the action as a
 job: a Clang from the `clang_tier` rung with its paired libstdc++, the

@@ -93,6 +93,32 @@ class Report(unittest.TestCase):
         self.assertIn("does not compile: boom", rows[-1])
 
 
+class Headers(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+        for name in ("lib.hpp", "lib/a.hpp", "lib/detail/b.hpp", "lib/sub/detail/c.hpp", "lib/sub/d.hpp"):
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text("#pragma once\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_every_header_the_glob_matches_is_taken_without_exclusions(self):
+        self.assertEqual(budget.headers(self.root, "**/*.hpp"),
+                         ["lib.hpp", "lib/a.hpp", "lib/detail/b.hpp", "lib/sub/d.hpp", "lib/sub/detail/c.hpp"])
+
+    def test_an_exclusion_drops_every_detail_directory_at_any_depth(self):
+        self.assertEqual(budget.headers(self.root, "**/*.hpp", ["*/detail/*"]), ["lib.hpp", "lib/a.hpp", "lib/sub/d.hpp"])
+
+    def test_exclusions_add_up(self):
+        self.assertEqual(budget.headers(self.root, "**/*.hpp", ["*/detail/*", "lib/sub/*"]), ["lib.hpp", "lib/a.hpp"])
+
+    def test_excluding_everything_is_refused(self):
+        with self.assertRaises(SystemExit):
+            budget.measure(self.root, "**/*.hpp", "clang++", [], 1, ["*"])
+
+
 @unittest.skipUnless(shutil.which(os.environ.get("CXX", "")) and "clang" in os.environ.get("CXX", ""), "CXX names no Clang")
 class Measure(unittest.TestCase):
     def test_a_header_tree_is_measured_and_its_counts_repeat(self):

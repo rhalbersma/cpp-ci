@@ -30,6 +30,13 @@ inputs:
     description: Which headers under root to measure, as a pathlib glob.
     required: false
     default: "**/*.hpp"
+  exclude:
+    description: >
+      Whitespace-separated patterns of headers the glob matches but not to
+      measure, matched with fnmatch against the path relative to root, so `*`
+      crosses directories: `*/detail/*` leaves out every detail directory.
+    required: false
+    default: ""
   cxx:
     description: The Clang driver to compile with.
     required: false
@@ -66,6 +73,7 @@ runs:
         ROOT: ${{ inputs.root }}
         BASE_ROOT: ${{ inputs.base_root }}
         GLOB: ${{ inputs.glob }}
+        EXCLUDE: ${{ inputs.exclude }}
         CXX_DRIVER: ${{ inputs.cxx }}
         FLAGS: ${{ inputs.flags }}
         REPEAT: ${{ inputs.repeat }}
@@ -80,10 +88,15 @@ runs:
         for flag in "${flags[@]}"; do
           flag_args+=("--flag=$flag")
         done
+        read -ra patterns <<< "$EXCLUDE"
+        exclude_args=()
+        for pattern in "${patterns[@]}"; do
+          exclude_args+=("--exclude=$pattern")
+        done
         mkdir -p "$OUT_DIR"
         measure() {
           python3 -I "$script" measure --root "$1" --glob "$GLOB" --cxx "$CXX_DRIVER" \
-            --repeat "$REPEAT" --out "$2" "${flag_args[@]}"
+            --repeat "$REPEAT" --out "$2" "${flag_args[@]}" "${exclude_args[@]}"
         }
         measure "$ROOT" "$OUT_DIR/head.json"
         if [ -z "$BASE_ROOT" ]; then
