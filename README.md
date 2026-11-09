@@ -1033,13 +1033,19 @@ dependencies from `vcpkg.json` when there is one, and on a pull request the
 base branch's tip checked out beside the merge commit, so that the comparison
 measures what merging would change. On any other event it reports the head.
 The base tree is compiled with the head's dependencies and flags, so only the
-headers differ.
+headers differ. Header-only dependencies that no package manager carries, such
+as sibling libraries, go in `dependency_repos`, one `<url> <revision>
+[include-dir]` per line: each is cloned at its pinned revision and its include
+directory, `include` by default, added with `-isystem`.
 
 ```yaml
   compile-budget:
     uses: rhalbersma/cpp-ci/.github/workflows/compile-budget.yml@<sha> # <tag>
     with:
       glob: xstd/**/*.hpp
+      exclude: "*/detail/*"
+      dependency_repos: |
+        https://github.com/rhalbersma/xstd-ints <sha>
 ```
 
 ## Conventions

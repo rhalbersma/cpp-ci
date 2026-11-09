@@ -433,6 +433,19 @@ jobs:
       flags: -std=c++20
       repeat: 1
 
+  # compile-budget.yml on a header that includes another repository's: this
+  # one, cloned at a fixed commit for test/coverage's header. The header fails
+  # without that clone on the path, and its detail header fails on its own, so
+  # the leg passes only if dependency_repos and exclude both take effect.
+  compile-budget-dependencies:
+    uses: ./.github/workflows/compile-budget.yml
+    with:
+      root: test/compile-budget/include
+      exclude: "*/detail/*"
+      dependency_repos: https://github.com/rhalbersma/cpp-ci 46625f976faaa32503d9b73479fb7cff298f66b1 test/coverage/include
+      flags: -std=c++20
+      repeat: 1
+
   # One check name that does not move, for branch protection to require -- the
   # same role the "all" job has in gcc.yml and its siblings.
   #
@@ -448,7 +461,7 @@ jobs:
     # nothing about what it gates. This is a display name chosen to match
     # them, not a reusable-workflow path.
     name: self-check / all
-    needs: [ actionlint, codeql, install-gcc, setup-toolchain, std-test-suite, layering, ci-local, sanitizer-legs, gcovr, coverage, config-drift, compile-budget, compile-budget-workflow ]
+    needs: [ actionlint, codeql, install-gcc, setup-toolchain, std-test-suite, layering, ci-local, sanitizer-legs, gcovr, coverage, config-drift, compile-budget, compile-budget-workflow, compile-budget-dependencies ]
     # Not always(): that runs on cancellation too, so a push superseding an
     # in-flight run leaves this red on the head it just replaced. !cancelled()
     # still runs when a leg fails, which is the whole job.
@@ -470,6 +483,7 @@ jobs:
           CONFIG_DRIFT: ${{ needs.config-drift.result }}
           COMPILE_BUDGET: ${{ needs.compile-budget.result }}
           COMPILE_BUDGET_WORKFLOW: ${{ needs.compile-budget-workflow.result }}
+          COMPILE_BUDGET_DEPENDENCIES: ${{ needs.compile-budget-dependencies.result }}
         run: |
           set -euo pipefail
           echo "actionlint: $ACTIONLINT"
@@ -485,6 +499,7 @@ jobs:
           echo "config-drift: $CONFIG_DRIFT"
           echo "compile-budget: $COMPILE_BUDGET"
           echo "compile-budget-workflow: $COMPILE_BUDGET_WORKFLOW"
+          echo "compile-budget-dependencies: $COMPILE_BUDGET_DEPENDENCIES"
           # Only success passes. A skipped leg is a leg that did not run, which
           # is exactly what this is here to catch.
           test "$ACTIONLINT" = success
@@ -500,3 +515,4 @@ jobs:
           test "$CONFIG_DRIFT" = success
           test "$COMPILE_BUDGET" = success
           test "$COMPILE_BUDGET_WORKFLOW" = success
+          test "$COMPILE_BUDGET_DEPENDENCIES" = success

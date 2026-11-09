@@ -146,7 +146,7 @@ jobs:
       legs: ${{ steps.cross.outputs.matrix }}
     steps:
       - id: gcc
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           mode: matrix
           toolchain: gcc
@@ -155,7 +155,7 @@ jobs:
           reduce_on_pr: ${{ inputs.reduce_on_pr }}
 
       - id: clang
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           mode: matrix
           toolchain: clang
@@ -168,7 +168,7 @@ jobs:
       # and a deliberate no-op for a caller that named none.
       - id: libcxx
         if: inputs.libcxx_tiers != ''
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           mode: matrix
           toolchain: clang
@@ -180,7 +180,7 @@ jobs:
       # action, the one table this workflow and a developer's local run share;
       # its script says why each leg is there.
       - id: cross
-        uses: rhalbersma/cpp-ci/.github/actions/sanitizer-legs@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/sanitizer-legs@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           gcc_rungs: ${{ steps.gcc.outputs.matrix }}
           clang_rungs: ${{ steps.clang.outputs.matrix }}
@@ -204,13 +204,13 @@ jobs:
       # relative reference resolves against the caller's workspace, which
       # holds the caller's checkout and none of this. The pin keeps a caller's
       # pinned workflow from silently pulling actions off a moving main.
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@d0f1d295d59167c75530aa657dc5f77e56545b16
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@7961515119aac2a312e6f2d6ae6d776ee8242c52
 
       # On the Clang legs this is the paired libstdc++ rather than a compiler.
       # The libc++ leg skips it: libc++ replaces libstdc++, which is its point.
       - name: Install GCC
         if: matrix.libcxx != true
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           version: ${{ matrix.family == 'gcc' && matrix.version || matrix.gcc_version }}
           trunk: ${{ matrix.family == 'gcc' && matrix.trunk || matrix.gcc_trunk }}
@@ -218,7 +218,7 @@ jobs:
 
       - name: Install Clang
         if: matrix.family == 'clang'
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           version: ${{ matrix.version }}
           llvm_suffix: ${{ matrix.llvm_suffix }}
@@ -229,7 +229,7 @@ jobs:
       # test. See the naming step below for what went wrong without them.
       - name: Locate the overlay triplets
         id: overlay
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-overlay@7961515119aac2a312e6f2d6ae6d776ee8242c52
 
       # Named once here rather than in every expression below, and the cache
       # key with them: it has to name the rung, or a tier change would restore
@@ -341,10 +341,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@7961515119aac2a312e6f2d6ae6d776ee8242c52
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           triplet: ${{ env.VCPKG_TRIPLET }}
           features: ${{ inputs.vcpkg_features }}

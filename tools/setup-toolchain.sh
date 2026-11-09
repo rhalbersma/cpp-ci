@@ -118,10 +118,10 @@ write_if_changed() {
 # warns about a weak algorithm on every update; that is the archive's key, not a fault in this script.
 sources_changed=0
 if [ ! -s /usr/share/keyrings/llvm.gpg ]; then
-        curl -fsSL --retry 3 https://apt.llvm.org/llvm-snapshot.gpg.key | $SUDO gpg --batch --yes --dearmor -o /usr/share/keyrings/llvm.gpg
+        curl -fsSL --retry 8 --retry-delay 15 https://apt.llvm.org/llvm-snapshot.gpg.key | $SUDO gpg --batch --yes --dearmor -o /usr/share/keyrings/llvm.gpg
 fi
 if [ ! -s /usr/share/keyrings/ubuntu-toolchain.gpg ]; then
-        curl -fsSL --retry 3 "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x60c317803a41ba51845e371a1e9377a2ba9ef27f" \
+        curl -fsSL --retry 8 --retry-delay 15 "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x60c317803a41ba51845e371a1e9377a2ba9ef27f" \
                 | $SUDO gpg --batch --yes --dearmor -o /usr/share/keyrings/ubuntu-toolchain.gpg
 fi
 llvm_sources=""
@@ -199,7 +199,7 @@ if [ -n "${gcc_trunk}" ]; then
         if [ ! -x /opt/gcc-latest/bin/g++ ] \
                 || { [ -n "${snapshot_etag}" ] && [ "$(cat "${snapshot_etag_file}" 2>/dev/null)" != "${snapshot_etag}" ]; }; then
                 snapshot="$(mktemp -d)"
-                curl -fsSL --retry 3 "${snapshot_url}" -o "${snapshot}/gcc-latest.deb"
+                curl -fsSL --retry 8 --retry-delay 15 "${snapshot_url}" -o "${snapshot}/gcc-latest.deb"
                 dpkg-deb -f "${snapshot}/gcc-latest.deb" Package Version
                 sha256sum "${snapshot}/gcc-latest.deb"
                 $SUDO dpkg -i "${snapshot}/gcc-latest.deb" > /dev/null || $SUDO timeout --kill-after=30s 20m apt-get install -f -y -qq
@@ -244,8 +244,8 @@ if ! "${local_bin}/actionlint" --version 2>/dev/null | grep -qx "${actionlint_ve
         case "${machine}" in aarch64) platform=linux_arm64 ;; *) platform=linux_amd64 ;; esac
         archive="actionlint_${actionlint_version#v}_${platform}.tar.gz"
         scratch="$(mktemp -d)"
-        curl -fsSL --retry 3 "${release}/${archive}" -o "${scratch}/${archive}"
-        curl -fsSL --retry 3 "${release}/actionlint_${actionlint_version#v}_checksums.txt" -o "${scratch}/checksums.txt"
+        curl -fsSL --retry 8 --retry-delay 15 "${release}/${archive}" -o "${scratch}/${archive}"
+        curl -fsSL --retry 8 --retry-delay 15 "${release}/actionlint_${actionlint_version#v}_checksums.txt" -o "${scratch}/checksums.txt"
         (cd "${scratch}" && grep " ${archive}\$" checksums.txt | sha256sum --check --quiet)
         tar -xzf "${scratch}/${archive}" -C "${scratch}" actionlint
         install -m 755 "${scratch}/actionlint" "${local_bin}/actionlint"
@@ -297,7 +297,7 @@ if [ "${#boost_libraries[@]}" -gt 0 ]; then
                 boost_installed "${prefix}" && continue
                 if [ -z "${boost}" ]; then
                         boost="$(mktemp -d)"
-                        curl -fsSL --retry 3 "https://github.com/boostorg/boost/releases/download/boost-${BOOST_VERSION}/boost-${BOOST_VERSION}-cmake.tar.xz" \
+                        curl -fsSL --retry 8 --retry-delay 15 "https://github.com/boostorg/boost/releases/download/boost-${BOOST_VERSION}/boost-${BOOST_VERSION}-cmake.tar.xz" \
                                 -o "${boost}/boost.tar.xz"
                         echo "${BOOST_SHA256}  ${boost}/boost.tar.xz" | sha256sum --check --quiet
                         tar -xf "${boost}/boost.tar.xz" -C "${boost}"
