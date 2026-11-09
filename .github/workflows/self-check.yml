@@ -209,13 +209,18 @@ jobs:
 
       - uses: ./.github/actions/apt-retry
 
+      # A legacy source file, as the xstd libraries' own setup scripts
+      # write it, must go: it names the same archive as cpp-ci-llvm.list.
       - name: Install the toolchain
         env:
           FLAGS: ${{ matrix.flags }}
         run: |
           set -euo pipefail
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           read -ra flags <<< "$FLAGS"
           tools/setup-toolchain.sh "${flags[@]}"
+          [ ! -e /etc/apt/sources.list.d/llvm.list ]
 
       - name: Run it again, which must install nothing
         env:

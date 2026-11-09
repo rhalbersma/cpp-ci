@@ -831,6 +831,9 @@ hash-pinned requirements, such as the CMake its workflows pin. A second run inst
 stable rung, since apt's libc++ packages exclude one another and CI gives each
 libc++ leg a runner of its own. Apt sources are written as files rather than
 through `add-apt-repository`, which needs the system Python's `apt_pkg`.
+An `llvm.list` or `ubuntu-toolchain.list` that names only these same archives, as
+the xstd libraries' own setup scripts wrote them, is removed, so apt does not
+warn that every target is configured twice.
 On an arm64 machine it installs the same rungs without what exists on x86-64
 alone: GCC's 32-bit multilib and the `-m32` Boost, with actionlint's arm64
 release in place of its amd64 one.

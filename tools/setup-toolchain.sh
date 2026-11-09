@@ -132,6 +132,16 @@ write_if_changed /etc/apt/sources.list.d/cpp-ci-llvm.list "${llvm_sources%$'\n'}
 write_if_changed /etc/apt/sources.list.d/cpp-ci-ubuntu-toolchain.list \
         "deb [signed-by=/usr/share/keyrings/ubuntu-toolchain.gpg] https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu ${codename} main" \
         && sources_changed=1
+# The xstd libraries' own setup scripts write the same two archives to llvm.list and ubuntu-toolchain.list, and on a
+# machine that ran one apt warns that every target is configured twice. Such a file goes, but only while every source
+# it names is one of these two archives.
+for legacy in /etc/apt/sources.list.d/llvm.list /etc/apt/sources.list.d/ubuntu-toolchain.list; do
+        [ -f "${legacy}" ] || continue
+        if ! grep -vE '^[[:space:]]*(#|$)' "${legacy}" | grep -qvE 'https://(apt\.llvm\.org|ppa\.launchpadcontent\.net/ubuntu-toolchain-r)/'; then
+                $SUDO rm -f "${legacy}"
+                sources_changed=1
+        fi
+done
 
 packages=("clang-format-${clang_stable}" "libc++-${clang_stable}-dev" "libc++abi-${clang_stable}-dev")
 for version in "${gcc_versions[@]}"; do
