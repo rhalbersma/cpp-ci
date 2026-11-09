@@ -106,11 +106,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@d0f1d295d59167c75530aa657dc5f77e56545b16
+      - uses: rhalbersma/cpp-ci/.github/actions/apt-retry@7961515119aac2a312e6f2d6ae6d776ee8242c52
 
       - name: Resolve the toolchain on this rung
         id: toolchain
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           toolchain: clang
           tier: ${{ inputs.clang_tier }}
@@ -125,14 +125,14 @@ jobs:
 
       # Not a compiler here: only the standard library Clang pairs with is wanted.
       - name: Install the paired libstdc++
-        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/install-gcc@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           version: ${{ steps.toolchain.outputs.gcc_version }}
           trunk: ${{ steps.toolchain.outputs.gcc_trunk }}
           symlink_binaries: "false"
 
       - name: Install Clang
-        uses: rhalbersma/cpp-ci/.github/actions/install-clang@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/install-clang@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           version: ${{ steps.toolchain.outputs.version }}
           llvm_suffix: ${{ steps.toolchain.outputs.llvm_suffix }}
@@ -148,11 +148,11 @@ jobs:
 
       - name: Check out vcpkg at the pinned commit
         if: hashFiles('vcpkg.json') != ''
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@7961515119aac2a312e6f2d6ae6d776ee8242c52
 
       - name: Install the dependencies
         if: hashFiles('vcpkg.json') != ''
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}
@@ -246,7 +246,7 @@ jobs:
           echo "flags=$flags" >> "$GITHUB_OUTPUT"
 
       - name: Measure and compare
-        uses: rhalbersma/cpp-ci/.github/actions/compile-budget@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/compile-budget@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           root: ${{ inputs.root }}
           base_root: ${{ steps.base.outputs.root }}
