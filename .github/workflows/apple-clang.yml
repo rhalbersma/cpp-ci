@@ -102,7 +102,7 @@ jobs:
       legs: ${{ steps.ladder.outputs.matrix }}
     steps:
       - id: ladder
-        uses: rhalbersma/cpp-ci/.github/actions/toolchain@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/toolchain@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           mode: matrix
           toolchain: apple-clang
@@ -152,10 +152,10 @@ jobs:
 
       # vcpkg at this repository's pin rather than the image's, so every leg resolves the same ports.
       - name: Check out vcpkg at the pinned commit
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-setup@7961515119aac2a312e6f2d6ae6d776ee8242c52
 
       - name: Install the test dependencies
-        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@d0f1d295d59167c75530aa657dc5f77e56545b16
+        uses: rhalbersma/cpp-ci/.github/actions/vcpkg-install@7961515119aac2a312e6f2d6ae6d776ee8242c52
         with:
           triplet: ${{ inputs.vcpkg_triplet }}
           features: ${{ inputs.vcpkg_features }}
