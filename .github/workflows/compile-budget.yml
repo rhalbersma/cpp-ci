@@ -28,11 +28,31 @@ on:
         type: string
         required: false
         default: "**/*.hpp"
+      exclude:
+        description: >
+          Whitespace-separated patterns of headers the glob matches but not to
+          measure, matched with fnmatch against the path relative to root, so `*`
+          crosses directories: `*/detail/*` leaves out every detail directory.
+        type: string
+        required: false
+        default: ""
+      dependency_repos:
+        description: >
+          Header-only repositories the headers include, one "<url> <revision>
+          [include-dir]" per line, the include directory relative to the clone
+          and include by default. Each is cloned at its revision and its include
+          directory added with -isystem, for the head and the base alike. The
+          revision is required: a floating branch would make the budget move
+          with whatever was pushed upstream.
+        type: string
+        required: false
+        default: ""
       flags:
         description: >
           Whitespace-separated compiler flags for every translation unit. The
-          root, and the include directory of the vcpkg dependencies when the
-          checkout has a vcpkg.json, are added on their own.
+          root, the include directories of dependency_repos, and that of the
+          vcpkg dependencies when the checkout has a vcpkg.json, are added on
+          their own.
         type: string
         required: false
         default: "-std=c++2c"
@@ -176,15 +196,49 @@ jobs:
           echo "Comparing against ${base:0:7}."
           echo "root=$RUNNER_TEMP/base/$ROOT" >> "$GITHUB_OUTPUT"
 
+      - name: Check out the dependency repositories
+        id: deps
+        if: inputs.dependency_repos != ''
+        env:
+          DEPENDENCY_REPOS: ${{ inputs.dependency_repos }}
+        run: |
+          set -euo pipefail
+          includes=""
+          n=0
+          while read -r url rev dir extra; do
+            if [ -z "$url" ]; then continue; fi
+            if [ -z "$rev" ] || [ -n "$extra" ]; then
+              echo "::error::dependency_repos wants '<url> <revision> [include-dir]' per line, got '$url $rev $dir $extra'"
+              exit 1
+            fi
+            n=$((n + 1))
+            src="$RUNNER_TEMP/dep-src-$n"
+            git clone --no-checkout --quiet "$url" "$src"
+            git -C "$src" checkout --detach --quiet "$rev"
+            include="$src/${dir:-include}"
+            if [ ! -d "$include" ]; then
+              echo "::error::$url at $rev has no ${dir:-include} directory"
+              exit 1
+            fi
+            echo "including ${dir:-include} of $url at $rev"
+            includes="$includes -isystem $include"
+          done <<< "$DEPENDENCY_REPOS"
+          if [ "$n" -eq 0 ]; then
+            echo "::error::dependency_repos was set but named no repository"
+            exit 1
+          fi
+          echo "flags=$includes" >> "$GITHUB_OUTPUT"
+
       - name: Assemble the compiler flags
         id: flags
         env:
           FLAGS: ${{ inputs.flags }}
+          DEP_FLAGS: ${{ steps.deps.outputs.flags }}
           RUNG_FLAGS: ${{ steps.toolchain.outputs.cxxflags }}
           TRIPLET: ${{ inputs.vcpkg_triplet }}
         run: |
           set -euo pipefail
-          flags="$RUNG_FLAGS $FLAGS"
+          flags="$RUNG_FLAGS $FLAGS$DEP_FLAGS"
           # -isystem, so a dependency's own warnings are not this budget's.
           if [ -d "vcpkg_installed/$TRIPLET/include" ]; then
             flags="$flags -isystem $GITHUB_WORKSPACE/vcpkg_installed/$TRIPLET/include"
@@ -197,6 +251,7 @@ jobs:
           root: ${{ inputs.root }}
           base_root: ${{ steps.base.outputs.root }}
           glob: ${{ inputs.glob }}
+          exclude: ${{ inputs.exclude }}
           cxx: clang++-${{ steps.toolchain.outputs.version }}
           flags: ${{ steps.flags.outputs.flags }}
           repeat: ${{ inputs.repeat }}
