@@ -1,0 +1,31 @@
+name: s390x probe
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ claude/s390x-probe ]
+
+jobs:
+  probe:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/apt-retry
+      - name: Probe apt on the runner
+        run: |
+          set -x
+          apt --version
+          dpkg --print-architecture
+          cat /etc/apt/apt.conf.d/* 2>/dev/null | grep -iv '^#' | head -40 || true
+          ls -l /etc/apt/sources.list.d/
+          sudo apt-get update; echo "update=$?"
+          for p in g++-15-s390x-linux-gnu qemu-user qemu-user-static no-such-package-xyz; do
+            apt-cache policy "$p"; echo "policy $p status=$?"
+            apt-cache policy "$p" 2>&1 >/dev/null | head; echo "--- stderr above for $p"
+          done
+          apt-cache search --names-only 's390x-linux-gnu' | grep -E '^g\+\+-[0-9]+-s390x' | head
+          apt-cache search --names-only '^qemu-user' | head
