@@ -160,13 +160,15 @@ done
 # apt-get update exits 0 when a source refuses its index, and apt then reads a package name it has no index for as a
 # pattern: during a 503 brownout on ppa.launchpadcontent.net, "g++-15" installed clang-15 and flang-15 and exited 0.
 # A package counts as available only where its own name heads apt-cache policy with a candidate, and the install
-# names that exact version, which apt never reads as a pattern. The update and the install are retried together,
-# each under a time limit, since a mirror that stops answering holds apt past its own timeouts.
+# names that exact version, which apt never reads as a pattern. The awk reads apt-cache's output to its end: apt 3
+# exits 100 when its standard output closes early, which fails the pipeline under pipefail. The update and the
+# install are retried together, each under a time limit, since a mirror that stops answering holds apt past its own
+# timeouts.
 candidate() {
         apt-cache policy "$1" | awk -v header="$1:" '
                 $0 == header { found = 1; next }
                 /^[^ ]/ { found = 0 }
-                found && $1 == "Candidate:" { print $2; exit }'
+                found && $1 == "Candidate:" && !printed { print $2; printed = 1 }'
 }
 if [ "${#missing[@]}" -gt 0 ] || [ "${sources_changed}" -eq 1 ]; then
         for attempt in 1 2 3 4 5; do

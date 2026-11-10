@@ -62,14 +62,16 @@ install_release() {
                 # apt-cache policy falls back to a regular expression too, so a package
                 # counts as available only where its own name heads the output with an
                 # install candidate, and the install names that exact version, which
-                # apt never reads as a pattern. A pool download refused with a 503
-                # fails the install after Acquire::Retries, so the update and the
-                # install are retried together, on add-apt-repository's backoff.
+                # apt never reads as a pattern; the awk reads apt-cache's output to
+                # its end, since apt 3 exits 100 when its standard output closes
+                # early. A pool download refused with a 503 fails the install after
+                # Acquire::Retries, so the update and the install are retried
+                # together, on add-apt-repository's backoff.
                 candidate() {
                         apt-cache policy "$1" | awk -v header="$1:" '
                                 $0 == header { found = 1; next }
                                 /^[^ ]/ { found = 0 }
-                                found && $1 == "Candidate:" { print $2; exit }'
+                                found && $1 == "Candidate:" && !printed { print $2; printed = 1 }'
                 }
                 packages=("g++-${VERSION}")
                 if [ "$MULTILIB" = "true" ]; then

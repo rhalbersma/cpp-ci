@@ -121,11 +121,12 @@ jobs:
       # reason install-gcc gives: apt reads a name it cannot find as a regular
       # expression, and g++-15-s390x-linux-gnu is one.
       #
-      # The ERR trap names the line and the command that failed. On the
-      # ubuntu-26.04 runner this step has exited with apt's status 100
-      # straight after apt-get update, with nothing in the log to say which
-      # command returned it, while the same script passes in an ubuntu:26.04
-      # container.
+      # candidate() reads apt-cache's output to its end. apt 3, which the
+      # ubuntu-26.04 runner ships, exits 100 when a write to its standard
+      # output fails, so an awk that exited at the Candidate line failed the
+      # pipeline under pipefail whenever apt-cache still had lines to write:
+      # qemu-user's two versions were enough. The ERR trap names the line and
+      # the command that failed.
       - name: Install the s390x cross GCC and QEMU
         run: |
           set -Eeuo pipefail
@@ -134,7 +135,7 @@ jobs:
             apt-cache policy "$1" | awk -v header="$1:" '
               $0 == header { found = 1; next }
               /^[^ ]/ { found = 0 }
-              found && $1 == "Candidate:" { print $2; exit }'
+              found && $1 == "Candidate:" && !printed { print $2; printed = 1 }'
           }
           packages=("g++-${GCC_VERSION}-s390x-linux-gnu" qemu-user)
           for i in 1 2 3 4 5; do
