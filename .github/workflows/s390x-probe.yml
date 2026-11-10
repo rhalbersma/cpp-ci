@@ -15,17 +15,18 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/apt-retry
-      - name: Probe apt on the runner
+      - name: Reproduce the early-exit awk under pipefail
         run: |
-          set -x
-          apt --version
-          dpkg --print-architecture
-          cat /etc/apt/apt.conf.d/* 2>/dev/null | grep -iv '^#' | head -40 || true
-          ls -l /etc/apt/sources.list.d/
-          sudo apt-get update; echo "update=$?"
-          for p in g++-15-s390x-linux-gnu qemu-user qemu-user-static no-such-package-xyz; do
-            apt-cache policy "$p"; echo "policy $p status=$?"
-            apt-cache policy "$p" 2>&1 >/dev/null | head; echo "--- stderr above for $p"
+          set -uo pipefail
+          sudo apt-get update > /dev/null 2>&1 || true
+          early() { apt-cache policy "$1" | awk -v header="$1:" '$0 == header { found = 1; next } /^[^ ]/ { found = 0 } found && $1 == "Candidate:" { print $2; exit }'; }
+          full() { apt-cache policy "$1" | awk -v header="$1:" '$0 == header { found = 1; next } /^[^ ]/ { found = 0 } found && $1 == "Candidate:" && !done { print $2; done = 1 }'; }
+          for f in early full; do
+            for p in g++-15-s390x-linux-gnu qemu-user; do
+              declare -A n=()
+              for i in $(seq 40); do "$f" "$p" > /dev/null 2> "/tmp/err-$f"; s=$?; n[$s]=$(( ${n[$s]:-0} + 1 )); done
+              echo "$f $p: $(for k in "${!n[@]}"; do printf '%s:%s ' "$k" "${n[$k]}"; done) stderr: $(head -c 200 "/tmp/err-$f")"
+              unset n
+            done
           done
-          apt-cache search --names-only 's390x-linux-gnu' | grep -E '^g\+\+-[0-9]+-s390x' | head
-          apt-cache search --names-only '^qemu-user' | head
+          strace -f -e trace=write -o /tmp/st apt-cache policy qemu-user | awk 'NR==3 { exit }' ; echo "traced status=$?"; tail -5 /tmp/st || true
